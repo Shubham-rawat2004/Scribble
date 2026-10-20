@@ -1,23 +1,30 @@
 import React, { useState } from 'react';
 import { socket } from '../services/socket';
 import { CreateRoomPayload, CreateRoomResponse, RoomDTO, PlayerDTO, RoomSettings } from '../types/game';
-import { AvatarPicker, AVATARS } from '../components/AvatarPicker';
+import { SkribblAvatarPicker } from '../components/SkribblAvatarPicker';
 import { Users, Clock, Hash, HelpCircle, Lock, Play, ArrowLeft } from 'lucide-react';
 
 interface CreateRoomProps {
+  initialNickname?: string;
+  initialAvatarId?: string;
   onRoomCreated: (room: RoomDTO, host: PlayerDTO) => void;
   onBack: () => void;
 }
 
-export const CreateRoom: React.FC<CreateRoomProps> = ({ onRoomCreated, onBack }) => {
-  const [nickname, setNickname] = useState<string>('');
-  const [avatarId, setAvatarId] = useState<string>('avatar_1');
+export const CreateRoom: React.FC<CreateRoomProps> = ({
+  initialNickname = '',
+  initialAvatarId = 'skribbl_0_0_0',
+  onRoomCreated,
+  onBack,
+}) => {
+  const [nickname, setNickname] = useState<string>(initialNickname);
+  const [avatarId, setAvatarId] = useState<string>(initialAvatarId);
   const [maxPlayers, setMaxPlayers] = useState<number>(8);
   const [totalRounds, setTotalRounds] = useState<number>(3);
   const [drawTimeSeconds, setDrawTimeSeconds] = useState<number>(80);
   const [wordOptionsCount, setWordOptionsCount] = useState<number>(3);
   const [hintsAllowed, setHintsAllowed] = useState<number>(2);
-  const [isPrivate, setIsPrivate] = useState<boolean>(false);
+  const [isPrivate, setIsPrivate] = useState<boolean>(true);
 
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,10 +91,18 @@ export const CreateRoom: React.FC<CreateRoomProps> = ({ onRoomCreated, onBack })
     });
   };
 
-  const selectedAvatar = AVATARS.find((a) => a.id === avatarId) || AVATARS[0];
-
   return (
-    <div className="card" style={{ maxWidth: '640px', margin: '0 auto' }}>
+    <div
+      style={{
+        background: '#ffffff',
+        borderRadius: '20px',
+        padding: '2rem 1.75rem',
+        maxWidth: '620px',
+        margin: '2rem auto',
+        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)',
+        border: '3px solid #1e293b',
+      }}
+    >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
         <button
           type="button"
@@ -97,7 +112,7 @@ export const CreateRoom: React.FC<CreateRoomProps> = ({ onRoomCreated, onBack })
         >
           <ArrowLeft size={16} /> Back
         </button>
-        <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e3a8a' }}>Create New Room</h2>
+        <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#1e3a8a' }}>Create Private Room</h2>
         <div style={{ width: '60px' }}></div>
       </div>
 
@@ -111,6 +126,7 @@ export const CreateRoom: React.FC<CreateRoomProps> = ({ onRoomCreated, onBack })
             marginBottom: '1rem',
             fontSize: '0.9rem',
             fontWeight: 500,
+            textAlign: 'center',
           }}
         >
           {error}
@@ -118,11 +134,11 @@ export const CreateRoom: React.FC<CreateRoomProps> = ({ onRoomCreated, onBack })
       )}
 
       {/* Quick Presets */}
-      <div style={{ marginBottom: '1.5rem' }}>
-        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#64748b', display: 'block', marginBottom: '0.4rem' }}>
+      <div style={{ marginBottom: '1.25rem' }}>
+        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#64748b', display: 'block', marginBottom: '0.4rem' }}>
           Quick Match Presets
         </span>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           <button
             type="button"
             className="btn btn-outline"
@@ -153,47 +169,40 @@ export const CreateRoom: React.FC<CreateRoomProps> = ({ onRoomCreated, onBack })
       <form onSubmit={handleSubmit}>
         {/* Nickname Input */}
         <div style={{ marginBottom: '1.25rem' }}>
-          <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: 600, color: '#334155', marginBottom: '0.4rem' }}>
-            Your Nickname
+          <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: 700, color: '#334155', marginBottom: '0.4rem' }}>
+            Your Host Nickname
           </label>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            <span
-              style={{
-                fontSize: '1.8rem',
-                background: selectedAvatar.bg,
-                padding: '0.3rem 0.6rem',
-                borderRadius: '8px',
-                border: '1px solid #cbd5e1',
-              }}
-            >
-              {selectedAvatar.emoji}
-            </span>
-            <input
-              type="text"
-              value={nickname}
-              onChange={(e) => setNickname(e.target.value)}
-              placeholder="e.g. MasterDrawer"
-              maxLength={30}
-              required
-              style={{
-                flex: 1,
-                padding: '0.75rem 1rem',
-                borderRadius: '8px',
-                border: '1px solid #cbd5e1',
-                fontSize: '1rem',
-                outline: 'none',
-              }}
-            />
-          </div>
+          <input
+            type="text"
+            value={nickname}
+            onChange={(e) => setNickname(e.target.value)}
+            placeholder="e.g. MasterDrawer"
+            maxLength={30}
+            required
+            style={{
+              width: '100%',
+              padding: '0.75rem 1rem',
+              borderRadius: '8px',
+              border: '2px solid #cbd5e1',
+              fontSize: '1rem',
+              fontWeight: 600,
+              outline: 'none',
+            }}
+          />
         </div>
 
         {/* Avatar Picker Component */}
-        <AvatarPicker selectedAvatarId={avatarId} onSelect={setAvatarId} />
+        <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
+          <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: 700, color: '#334155', marginBottom: '0.5rem' }}>
+            Host Avatar
+          </label>
+          <SkribblAvatarPicker selectedAvatarId={avatarId} onSelect={setAvatarId} size={90} />
+        </div>
 
-        <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0', margin: '1.5rem 0' }} />
+        <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0', margin: '1.25rem 0' }} />
 
         {/* Room Settings Sliders */}
-        <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#1e293b', marginBottom: '1rem' }}>
+        <h3 style={{ fontSize: '1rem', fontWeight: 800, color: '#1e293b', marginBottom: '1rem' }}>
           Custom Room Rules
         </h3>
 
@@ -305,13 +314,23 @@ export const CreateRoom: React.FC<CreateRoomProps> = ({ onRoomCreated, onBack })
         {/* Submit Button */}
         <button
           type="submit"
-          className="btn btn-primary"
+          className="skribbl-btn skribbl-btn-green"
           disabled={loading}
-          style={{ width: '100%', padding: '0.85rem', fontSize: '1.05rem' }}
+          style={{
+            width: '100%',
+            padding: '0.9rem',
+            fontSize: '1.15rem',
+            fontWeight: 800,
+            borderRadius: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '0.5rem',
+          }}
         >
           {loading ? 'Creating Room...' : (
             <>
-              <Play size={18} /> Create Room & Enter Lobby
+              <Play size={20} fill="currentColor" /> Create Room & Enter Lobby
             </>
           )}
         </button>

@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { RoomSettings, RoomDTO, PlayerDTO, GameSessionDTO } from '../types/room.js';
 import { Room } from './Room.js';
 import { Player } from './Player.js';
+import { TurnManager } from './TurnManager.js';
 import { generateRoomCode } from '../utils/codeGenerator.js';
 import { pool } from '../db/connection.js';
 
@@ -13,6 +14,7 @@ export class RoomManager {
   private static instance: RoomManager;
   private rooms: Map<string, Room> = new Map();
   private socketToPlayerMap: Map<string, { roomId: string; playerId: string }> = new Map();
+  private turnManagers: Map<string, TurnManager> = new Map();
 
   private constructor() {}
 
@@ -165,6 +167,14 @@ export class RoomManager {
     const sessionId = crypto.randomUUID();
     room.setStatus('PLAYING');
 
+    // Designate initial drawer (host player starts as active drawer)
+    const initialDrawerId = room.hostPlayerId;
+    room.setCurrentDrawer(initialDrawerId);
+
+    // Initialize TurnManager for this room
+    const turnManager = new TurnManager(room, sessionId);
+    this.turnManagers.set(room.id, turnManager);
+
     // Persist status change and game session in MySQL
     try {
       await pool.execute(`UPDATE rooms SET status = 'PLAYING' WHERE room_id = ?`, [room.id]);
@@ -172,7 +182,7 @@ export class RoomManager {
         `INSERT INTO game_sessions (session_id, room_id, status, started_at) VALUES (?, ?, 'IN_PROGRESS', NOW())`,
         [sessionId, room.id]
       );
-      console.log(`[RoomManager] Game session ${sessionId} started for room ${room.id} in MySQL.`);
+      console.log(`[RoomManager] Game session ${sessionId} started for room ${room.id} in MySQL (Drawer: ${initialDrawerId}).`);
     } catch (dbError) {
       console.error('[RoomManager] Failed to persist game session in MySQL:', (dbError as Error).message);
     }
@@ -181,6 +191,7 @@ export class RoomManager {
       sessionId,
       roomId: room.id,
       status: 'IN_PROGRESS',
+      currentDrawerId: initialDrawerId,
       startedAt: new Date().toISOString(),
     };
 
@@ -262,6 +273,10 @@ export class RoomManager {
     if (!player) return undefined;
 
     return { room, player };
+  }
+
+  public getTurnManager(roomId: string): TurnManager | undefined {
+    return this.turnManagers.get(roomId.toUpperCase());
   }
 
   public getActiveRoomCount(): number {

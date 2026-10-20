@@ -201,3 +201,60 @@ public async startGame(roomId: string, socketId: string) {
 ## 13. Future Improvements
 - Add spectator mode toggle for players who join after the room reaches capacity.
 - Add ready-up toggle checkboxes for each player before the host can start.
+
+
+---
+
+## 14. Authentic Skribbl.io Redesign & Smart Link Extraction
+
+### A. Authentic Landing Page (`Home.tsx`)
+- **Blue Doodle Background:** Integrated `<DoodleBackground />` featuring repeating SVG game doodles (pencils, palletes, stars, swirls, timers, and smileys) on a deep radial blue `#0a3d8f` canvas.
+- **Bubbly Logo (`SkribblLogo.tsx`):** Hand-crafted colorful bubbly typography with drop shadows, dark outlines, and a tilted pencil icon decorating the letter "k".
+- **Top Peeking Avatars:** Playful row of colorful smiling doodle heads peeking over the top border of the game card.
+- **Center Action Card:**
+  - Name input (`Enter your name`).
+  - Language selector (`English`).
+  - Interactive Avatar Picker (`< [Avatar] >` carousel + 🎲 randomizer button).
+  - 3D-styled green **"Play!"** button (`.skribbl-btn-green`).
+  - 3D-styled blue **"Create Private Room"** button (`.skribbl-btn-blue`).
+  - Inline / expandable **"Join Private Room"** code input with smart paste.
+
+### B. Vector SVG Modular Avatar System (`SkribblAvatar.tsx` & `SkribblAvatarPicker.tsx`)
+- 10 vibrant skin colors (`#facc15`, `#38bdf8`, `#4ade80`, `#f43f5e`, `#a855f7`, etc.)
+- 8 unique eye expressions (Classic dots, Happy arches, Cool sunglasses, Sparkle stars, Winks, Zen dashes, Wide open, Googly derp)
+- 8 unique mouth expressions (Warm curve, Laugh with tongue, Playful tongue-out, Cute cat `:3`, Toothy grin, Whistle `o`, Smirk, Serious)
+- **640 distinct combinations** encoded as lightweight IDs (`skribbl_${c}_${e}_${m}`) with full backwards compatibility for legacy emoji avatars.
+- Interactive controls: left/right feature arrows, color drawer, and animated 3D dice randomizer button (🎲).
+
+### C. Authentic URL Format & Smart Paste Extraction
+- **Authentic Link Format:** `${window.location.origin}/?${room.id}` (e.g. `http://localhost:5173/?SALNXJ` or in production `https://skribbl.io/?f1CF68YI`).
+- **Robust Multi-Pattern Regex Parser:**
+  ```ts
+  function extractCode(input: string): string {
+    const trimmed = input.trim();
+    // 1. Authentic Skribbl URL (?ROOMCODE)
+    const authenticMatch = trimmed.match(/\?([A-Za-z0-9]{6,8})(?:$|[&#])/);
+    if (authenticMatch) return authenticMatch[1].toUpperCase();
+
+    // 2. Named query parameter (?join=CODE or ?room=CODE)
+    const namedQueryMatch = trimmed.match(/[?&](?:join|room)=([A-Za-z0-9]{6,8})/i);
+    if (namedQueryMatch) return namedQueryMatch[1].toUpperCase();
+
+    // 3. Path parameter (/join/CODE)
+    const pathMatch = trimmed.match(/\/join\/([A-Za-z0-9]{6,8})/i);
+    if (pathMatch) return pathMatch[1].toUpperCase();
+
+    // 4. Raw 6-char code
+    const rawMatch = trimmed.match(/^[A-Za-z0-9]{6,8}$/);
+    if (rawMatch) return rawMatch[0].toUpperCase();
+
+    return trimmed.toUpperCase();
+  }
+  ```
+- **Zero URL Collision:** The parser strictly prevents hostnames (such as `localhost` or domain names) from being misidentified as room codes.
+- **One-Click Joining:** When an invited user visits `/?SALNXJ`, `App.tsx` immediately detects the room code on initial load, displays an "Invited to Room SALNXJ" banner on the home screen, and enables 1-click joining via the green "Play!" button.
+
+### D. Discreet Architecture & System Diagnostics Modal (`DiagnosticsModal.tsx`)
+- To maintain an authentic, distraction-free gaming experience for regular players while keeping enterprise-grade observability for technical interviews:
+  - Phase 1 system telemetry (REST API health, Socket.IO latency ping test, Docker MySQL status, and live WebSocket event feed) has been moved into a slide-over modal.
+  - Activated via a discreet floating pill button (`🛠️ Architecture & System Diagnostics`) at the bottom of the viewport with a real-time pulsing connection indicator dot.

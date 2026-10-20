@@ -18,6 +18,19 @@ export interface PlayerDTO {
   isConnected: boolean;
 }
 
+export interface DrawPoint {
+  x: number; // Normalized coordinate [0.0 - 1.0]
+  y: number; // Normalized coordinate [0.0 - 1.0]
+}
+
+export interface DrawStrokeDTO {
+  id: string;
+  tool: 'brush' | 'eraser';
+  color: string;
+  size: number;
+  points: DrawPoint[];
+}
+
 export interface RoomDTO {
   id: string;
   name: string;
@@ -26,6 +39,7 @@ export interface RoomDTO {
   settings: RoomSettings;
   status: RoomStatus;
   players: PlayerDTO[];
+  currentDrawerId?: string | null;
   createdAt: string;
 }
 
@@ -61,11 +75,38 @@ export interface GameSessionDTO {
   sessionId: string;
   roomId: string;
   status: string;
+  currentDrawerId?: string | null;
   startedAt: string;
 }
 
 export interface StartGameResponse {
   success: boolean;
   sessionId?: string;
+  currentDrawerId?: string | null;
   error?: string;
+}
+
+// --- Drawing WebSocket Protocols ---
+export interface DrawStartPayload {
+  roomId: string;
+  stroke: DrawStrokeDTO;
+}
+
+export interface DrawMovePayload {
+  roomId: string;
+  strokeId: string;
+  points: DrawPoint[];
+}
+
+export interface DrawEndPayload {
+  roomId: string;
+  strokeId: string;
+}
+
+export interface DrawUndoPayload {
+  roomId: string;
+}
+
+export interface CanvasClearPayload {
+  roomId: string;
 }

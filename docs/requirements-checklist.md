@@ -33,13 +33,13 @@ This document tracks every single requirement extracted from the official assign
 | **REQ-MH-01** | Create room with configurable settings (max players, rounds, draw time, word count, hints) | Page 1, 2, 5 | MUST | Phase 2 | `IMPLEMENTED` | `TESTED` | `backend/src/game/Room.ts`, `backend/src/sockets/roomHandler.ts`, `frontend/src/pages/CreateRoom.tsx` |
 | **REQ-MH-02** | Join room via room code or direct link | Page 1, 5 | MUST | Phase 3 | `IMPLEMENTED` | `TESTED` | `frontend/src/pages/JoinRoom.tsx`, `backend/src/sockets/roomHandler.ts` |
 | **REQ-MH-03** | Lobby showing connected players list & host-only game start control | Page 1, 4, 5 | MUST | Phase 3 | `IMPLEMENTED` | `TESTED` | `frontend/src/pages/Lobby.tsx`, `backend/src/sockets/roomHandler.ts` |
-| **REQ-MH-04** | Turn-based rounds: exactly one drawer per round, all other players guess | Page 1, 4, 5 | MUST | Phase 6 | `NOT STARTED` | `NOT STARTED` | TBD (`backend/src/game/Game.ts`, `backend/src/game/Round.ts`) |
-| **REQ-MH-05** | Real-time drawing sync via WebSockets (strokes visible immediately to all viewers) | Page 1, 4, 5 | MUST | Phase 5 | `NOT STARTED` | `NOT STARTED` | TBD (`frontend/src/components/Canvas.tsx`, `backend/src/sockets/drawingHandler.ts`) |
-| **REQ-MH-06** | Word selection: active drawer picks 1 word from a list of N choices (1–5 words) | Page 2, 4, 5 | MUST | Phase 6 | `NOT STARTED` | `NOT STARTED` | TBD (`frontend/src/components/WordPickerModal.tsx`, `backend/src/game/WordManager.ts`) |
+| **REQ-MH-04** | Turn-based rounds: exactly one drawer per round, all other players guess | Page 1, 4, 5 | MUST | Phase 6 | `IMPLEMENTED` | `TESTED` | `backend/src/game/TurnManager.ts`, `backend/src/sockets/gameHandler.ts`, `frontend/src/pages/GameView.tsx` |
+| **REQ-MH-05** | Real-time drawing sync via WebSockets (strokes visible immediately to all viewers) | Page 1, 4, 5 | MUST | Phase 5 | `IMPLEMENTED` | `TESTED` | `backend/src/sockets/drawingHandler.ts`, `frontend/src/pages/GameView.tsx`, `frontend/src/hooks/useCanvas.ts` |
+| **REQ-MH-06** | Word selection: active drawer picks 1 word from a list of N choices (1–5 words) | Page 2, 4, 5 | MUST | Phase 6 | `IMPLEMENTED` | `TESTED` | `frontend/src/components/WordPickerModal.tsx`, `backend/src/game/WordManager.ts`, `backend/src/game/TurnManager.ts` |
 | **REQ-MH-07** | Guessing system: players type guesses in chat, server verifies against word | Page 2, 5 | MUST | Phase 7 | `NOT STARTED` | `NOT STARTED` | TBD (`backend/src/sockets/chatHandler.ts`, `frontend/src/components/ChatBox.tsx`) |
 | **REQ-MH-08** | Scoring engine: points awarded for correct guesses (faster guesses = more points, drawer points) | Page 1, 2, 5 | MUST | Phase 8 | `NOT STARTED` | `NOT STARTED` | TBD (`backend/src/game/ScoringEngine.ts`) |
 | **REQ-MH-09** | Live leaderboard & game end with winner announcement & podium | Page 1, 2, 4, 5 | MUST | Phase 8, 9 | `NOT STARTED` | `NOT STARTED` | TBD (`frontend/src/components/Leaderboard.tsx`, `frontend/src/pages/GameOver.tsx`) |
-| **REQ-MH-10** | Basic drawing tools: Brush/pen, color palette, brush size slider, undo, clear canvas | Page 2, 4, 5 | MUST | Phase 4 | `NOT STARTED` | `NOT STARTED` | TBD (`frontend/src/components/CanvasToolbar.tsx`, `frontend/src/hooks/useCanvas.ts`) |
+| **REQ-MH-10** | Basic drawing tools: Brush/pen, color palette, brush size slider, undo, clear canvas | Page 2, 4, 5 | MUST | Phase 4 | `IMPLEMENTED` | `TESTED` | `frontend/src/components/Canvas.tsx`, `frontend/src/components/CanvasToolbar.tsx`, `frontend/src/hooks/useCanvas.ts` |
 
 ---
 
@@ -47,10 +47,10 @@ This document tracks every single requirement extracted from the official assign
 
 | ID | Requirement Description | PDF Ref | Priority | Planned Phase | Implementation Status | Verification Status | Relevant Implementation Files |
 |---|---|---|---|---|---|---|---|
-| **REQ-SH-01** | Word hints: reveal letters progressively over time (e.g. `_ _ a _ _`) based on round timer | Page 2, 3, 5 | SHOULD | Phase 9 | `NOT STARTED` | `NOT STARTED` | TBD (`backend/src/game/HintManager.ts`, `frontend/src/components/WordHint.tsx`) |
+| **REQ-SH-01** | Word hints: reveal letters progressively over time (e.g. `_ _ a _ _`) based on round timer | Page 2, 3, 5 | SHOULD | Phase 6 | `IMPLEMENTED` | `TESTED` | `backend/src/game/HintManager.ts`, `backend/src/game/TurnManager.ts`, `frontend/src/components/WordMaskBar.tsx` |
 | **REQ-SH-02** | Dual chat mode: guesses filtered from view if correct; general chat; notification broadcast | Page 2, 4, 5 | SHOULD | Phase 7 | `NOT STARTED` | `NOT STARTED` | TBD (`backend/src/sockets/chatHandler.ts`, `frontend/src/components/ChatBox.tsx`) |
 | **REQ-SH-03** | Server-authoritative draw time countdown timer synchronized to all clients | Page 2, 4, 5 | SHOULD | Phase 9 | `NOT STARTED` | `NOT STARTED` | TBD (`backend/src/game/Timer.ts`, `frontend/src/components/TimerDisplay.tsx`) |
-| **REQ-SH-04** | Private rooms with invite-only links (e.g. `https://host/join/:roomCode`) | Page 1, 5 | SHOULD | Phase 10 | `NOT STARTED` | `NOT STARTED` | TBD (`frontend/src/App.tsx`, `frontend/src/pages/JoinRoom.tsx`) |
+| **REQ-SH-04** | Private rooms with authentic invite-only links (e.g. `https://host/?ROOMCODE`) with smart extraction | Page 1, 5 | SHOULD | Phase 3 | `IMPLEMENTED` | `TESTED` | `frontend/src/App.tsx`, `frontend/src/pages/Home.tsx`, `frontend/src/pages/JoinRoom.tsx`, `frontend/src/pages/Lobby.tsx` |
 
 ---
 
@@ -58,11 +58,11 @@ This document tracks every single requirement extracted from the official assign
 
 | ID | Requirement Description | PDF Ref | Priority | Planned Phase | Implementation Status | Verification Status | Relevant Implementation Files |
 |---|---|---|---|---|---|---|---|
-| **REQ-NH-01** | Categorized word list (animals, objects, actions, food, places) | Page 3, 5 | NICE | Phase 6 | `NOT STARTED` | `NOT STARTED` | TBD (`backend/src/data/words.json`, `backend/src/game/WordManager.ts`) |
-| **REQ-NH-02** | Eraser drawing tool (draws with background color / erase composite mode) | Page 2, 5 | NICE | Phase 4 | `NOT STARTED` | `NOT STARTED` | TBD (`frontend/src/components/CanvasToolbar.tsx`) |
-| **REQ-NH-03** | OOP WebSocket server structure (`Room`, `Game`, `Player`, `MessageHandler`, `Round`) | Page 6 | BONUS | Phase 1–6 | `NOT STARTED` | `NOT STARTED` | TBD (`backend/src/game/*`, `backend/src/sockets/*`) |
+| **REQ-NH-01** | Categorized word list (animals, objects, actions, food, places) | Page 3, 5 | NICE | Phase 6 | `IMPLEMENTED` | `TESTED` | `backend/src/game/WordManager.ts`, `backend/src/db/migrations/001_initial_schema.sql` |
+| **REQ-NH-02** | Eraser drawing tool (draws with background color / erase composite mode) | Page 2, 5 | NICE | Phase 4 | `IMPLEMENTED` | `TESTED` | `frontend/src/components/CanvasToolbar.tsx`, `frontend/src/hooks/useCanvas.ts` |
+| **REQ-NH-03** | OOP WebSocket server structure (`Room`, `Game`, `Player`, `MessageHandler`, `Round`) | Page 6 | BONUS | Phase 1–6 | `IMPLEMENTED` | `TESTED` | `backend/src/game/*`, `backend/src/sockets/*` |
 | **REQ-NH-04** | Configurable room settings (draw time 15–240s, rounds 2–10, word choices 1–5, max players 2–20) | Page 2, 3, 6 | BONUS | Phase 2 | `IMPLEMENTED` | `TESTED` | `backend/src/types/room.ts`, `backend/src/sockets/roomHandler.ts`, `frontend/src/pages/CreateRoom.tsx` |
-| **REQ-NH-05** | Player avatars in lobby and in-game player cards | Page 7 | BONUS | Phase 2, 3 | `IMPLEMENTED` | `TESTED` | `frontend/src/components/AvatarPicker.tsx` |
+| **REQ-NH-05** | Player avatars in lobby and in-game player cards (modular SVG faces & randomizer) | Page 7 | BONUS | Phase 2, 3 | `IMPLEMENTED` | `TESTED` | `frontend/src/components/SkribblAvatar.tsx`, `frontend/src/components/SkribblAvatarPicker.tsx` |
 | **REQ-NH-06** | Host moderation (kick / ban players from lobby or game) | Page 5, 7 | NICE | Phase 10 | `NOT STARTED` | `NOT STARTED` | TBD (`backend/src/sockets/roomHandler.ts`) |
 | **REQ-NH-07** | Custom word list uploaded or specified by room host | Page 7 | BONUS | Phase 10 | `NOT STARTED` | `NOT STARTED` | TBD (`backend/src/game/WordManager.ts`) |
 | **REQ-NH-08** | Public room matchmaking (join random open room) | Page 1 | OPTIONAL| Phase 10 | `NOT STARTED` | `NOT STARTED` | TBD (`backend/src/sockets/roomHandler.ts`) |
@@ -79,17 +79,17 @@ This document tracks every single requirement extracted from the official assign
 | `player_joined` | Server ➔ Clients | `{ player, players }` | Broadcast updated room roster | Phase 3 | `IMPLEMENTED` |
 | `player_left` | Server ➔ Clients | `{ playerId, players }` | Broadcast player departure/disconnect | Phase 3 | `IMPLEMENTED` |
 | `start_game` | Client ➔ Server | `{}` (Host only) | Host initiates game start | Phase 3 | `IMPLEMENTED` |
-| `game_state` | Server ➔ Clients | `{ phase, round, drawerId, word, hints }` | Full game state synchronization | Phase 6 | `NOT STARTED` |
-| `round_start` | Server ➔ Clients | `{ drawerId, wordOptions, drawTime }` | Round initialization (options to drawer) | Phase 6 | `NOT STARTED` |
-| `word_chosen` | Client ➔ Server | `{ word }` | Drawer selects word, server starts timer | Phase 6 | `NOT STARTED` |
-| `round_end` | Server ➔ Clients | `{ word, scores, nextDrawer }` | Round concludes, word revealed, scores | Phase 8 | `NOT STARTED` |
+| `game_state` | Server ➔ Clients | `{ phase, round, drawerId, word, hints }` | Full game state synchronization | Phase 6 | `IMPLEMENTED` |
+| `round_start` / `turn_start` | Server ➔ Clients | `{ drawerId, wordOptions, drawTime, wordMask }` | Round initialization (options to drawer, zero-trust mask to guessers) | Phase 6 | `IMPLEMENTED` |
+| `word_chosen` / `select_word`| Client ➔ Server | `{ word }` | Drawer selects word, server starts timer | Phase 6 | `IMPLEMENTED` |
+| `round_end` / `turn_end` | Server ➔ Clients | `{ word, scores, nextDrawer }` | Round concludes, word revealed, scores | Phase 6, 8 | `IMPLEMENTED (Turn End)` |
 | `game_over` | Server ➔ Clients | `{ winner, leaderboard }` | Game finished, show victory screen | Phase 9 | `NOT STARTED` |
-| `draw_start` | Client ➔ Server | `{ x, y, color, size }` | Drawer starts stroke | Phase 5 | `NOT STARTED` |
-| `draw_move` | Client ➔ Server | `{ x, y }` | Drawer continues stroke | Phase 5 | `NOT STARTED` |
-| `draw_end` | Client ➔ Server | `{}` | Drawer ends stroke | Phase 5 | `NOT STARTED` |
-| `draw_data` | Server ➔ Clients | `{ ...stroke }` | Broadcast stroke coordinates to room | Phase 5 | `NOT STARTED` |
-| `canvas_clear` | Client ➔ Server | `{}` | Drawer clears canvas; broadcast to all | Phase 4, 5 | `NOT STARTED` |
-| `draw_undo` | Client ➔ Server | `{}` | Drawer undos last stroke; broadcast | Phase 4, 5 | `NOT STARTED` |
+| `draw_start` | Client ➔ Server | `{ x, y, color, size }` | Drawer starts stroke | Phase 5 | `IMPLEMENTED` |
+| `draw_move` | Client ➔ Server | `{ x, y }` | Drawer continues stroke | Phase 5 | `IMPLEMENTED` |
+| `draw_end` | Client ➔ Server | `{}` | Drawer ends stroke | Phase 5 | `IMPLEMENTED` |
+| `draw_data` | Server ➔ Clients | `{ ...stroke }` | Broadcast stroke coordinates to room | Phase 5 | `IMPLEMENTED` |
+| `canvas_clear` | Client ➔ Server | `{}` | Drawer clears canvas; broadcast to all | Phase 4, 5 | `IMPLEMENTED` |
+| `draw_undo` | Client ➔ Server | `{}` | Drawer undos last stroke; broadcast | Phase 4, 5 | `IMPLEMENTED` |
 | `guess` | Client ➔ Server | `{ text }` | Player submits word guess | Phase 7 | `NOT STARTED` |
 | `guess_result` | Server ➔ Clients | `{ correct, playerId, playerName, points }` | Guess correctness feedback | Phase 7 | `NOT STARTED` |
 | `chat` | Client ➔ Server | `{ text }` | Regular chat message | Phase 7 | `NOT STARTED` |

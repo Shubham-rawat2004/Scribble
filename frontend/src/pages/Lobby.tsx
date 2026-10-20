@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { socket } from '../services/socket';
 import { RoomDTO, PlayerDTO, GameSessionDTO, StartGameResponse } from '../types/game';
-import { AVATARS } from '../components/AvatarPicker';
+import { SkribblAvatar } from '../components/SkribblAvatar';
 import {
   Users,
   Clock,
@@ -81,7 +81,7 @@ export const Lobby: React.FC<LobbyProps> = ({
   };
 
   const copyInviteLink = () => {
-    const link = `${window.location.origin}/join/${room.id}`;
+    const link = `${window.location.origin}/?${room.id}`;
     navigator.clipboard.writeText(link);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
@@ -195,7 +195,6 @@ export const Lobby: React.FC<LobbyProps> = ({
             }}
           >
             {players.map((p) => {
-              const avatar = AVATARS.find((a) => a.id === p.avatarId) || AVATARS[0];
               const isCurrent = p.id === currentPlayer.id;
 
               return (
@@ -212,17 +211,7 @@ export const Lobby: React.FC<LobbyProps> = ({
                     boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
                   }}
                 >
-                  <span
-                    style={{
-                      fontSize: '1.8rem',
-                      background: avatar.bg,
-                      padding: '0.2rem 0.4rem',
-                      borderRadius: '8px',
-                      lineHeight: 1,
-                    }}
-                  >
-                    {avatar.emoji}
-                  </span>
+                  <SkribblAvatar avatarId={p.avatarId} size={44} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div
                       style={{
