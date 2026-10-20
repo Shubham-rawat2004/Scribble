@@ -188,7 +188,7 @@ export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
         });
 
         if (typeof callback === 'function') {
-          callback({ success: true, sessionId: session.sessionId });
+          callback({ success: true, sessionId: session.sessionId, currentDrawerId: session.currentDrawerId });
         }
 
         console.log(`[Socket.IO] Game started in room "${room.id}" (Session: ${session.sessionId})`);

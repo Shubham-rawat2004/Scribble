@@ -209,3 +209,62 @@ body {
   font-size: 0.875rem;
   border-top: 1px solid var(--border);
 }
+
+/* --- Authentic Skribbl 3D Button Styles --- */
+.skribbl-btn {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.1s ease;
+  user-select: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.skribbl-btn:active {
+  transform: translateY(3px) !important;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3) !important;
+}
+
+.skribbl-btn-green {
+  background: linear-gradient(to bottom, #53bf24 0%, #3e9a18 100%);
+  color: #ffffff;
+  box-shadow: 0 5px 0 #2b700f, 0 8px 12px rgba(43, 112, 15, 0.35);
+}
+
+.skribbl-btn-green:hover {
+  background: linear-gradient(to bottom, #5dce29 0%, #44a91b 100%);
+}
+
+.skribbl-btn-blue {
+  background: linear-gradient(to bottom, #1d6fe9 0%, #1557bf 100%);
+  color: #ffffff;
+  box-shadow: 0 5px 0 #0e3d88, 0 8px 12px rgba(14, 61, 136, 0.35);
+}
+
+.skribbl-btn-blue:hover {
+  background: linear-gradient(to bottom, #2b7af0 0%, #1a62d4 100%);
+}
+
+.avatar-arrow-btn:hover {
+  background: #f1f5f9 !important;
+  transform: scale(1.08);
+}
+
+.avatar-arrow-btn:active {
+  transform: scale(0.96);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

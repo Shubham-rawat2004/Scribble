@@ -1,9 +1,10 @@
-import { RoomSettings, RoomStatus, RoomDTO } from '../types/room.js';
+import { RoomSettings, RoomStatus, RoomDTO, DrawStrokeDTO, DrawPoint } from '../types/room.js';
 import { Player } from './Player.js';
 
 /**
  * OOP Domain Model representing an isolated game room.
- * Manages player rosters, room settings, host privileges, and lifecycle state.
+ * Manages player rosters, room settings, host privileges, lifecycle state,
+ * active drawer turns, and vector stroke history.
  */
 export class Room {
   public readonly id: string;
@@ -14,6 +15,10 @@ export class Room {
   public status: RoomStatus;
   public readonly createdAt: Date;
   public players: Map<string, Player>;
+
+  // Real-Time Drawing Turn & Vector History
+  public currentDrawerId: string | null = null;
+  public strokeHistory: DrawStrokeDTO[] = [];
 
   constructor(
     id: string,
@@ -29,6 +34,7 @@ export class Room {
     this.status = 'LOBBY';
     this.createdAt = new Date();
     this.players = new Map<string, Player>();
+    this.strokeHistory = [];
 
     // Register initial host
     this.addPlayer(hostPlayer);
@@ -109,6 +115,37 @@ export class Room {
     this.status = newStatus;
   }
 
+  // --- Real-Time Drawing Turn & Buffer Operations ---
+  public setCurrentDrawer(playerId: string | null): void {
+    this.currentDrawerId = playerId;
+    this.strokeHistory = [];
+  }
+
+  public isDrawer(socketId: string): boolean {
+    if (!this.currentDrawerId) return false;
+    const player = this.getPlayerBySocket(socketId);
+    return Boolean(player && player.id === this.currentDrawerId);
+  }
+
+  public addStroke(stroke: DrawStrokeDTO): void {
+    this.strokeHistory.push(stroke);
+  }
+
+  public appendPoints(strokeId: string, points: DrawPoint[]): void {
+    const stroke = this.strokeHistory.find((s) => s.id === strokeId);
+    if (stroke) {
+      stroke.points.push(...points);
+    }
+  }
+
+  public undoStroke(): DrawStrokeDTO | undefined {
+    return this.strokeHistory.pop();
+  }
+
+  public clearCanvas(): void {
+    this.strokeHistory = [];
+  }
+
   public toDTO(): RoomDTO {
     return {
       id: this.id,
@@ -118,6 +155,7 @@ export class Room {
       settings: { ...this.settings },
       status: this.status,
       players: this.getPlayerList().map((p) => p.toDTO()),
+      currentDrawerId: this.currentDrawerId,
       createdAt: this.createdAt.toISOString(),
     };
   }
