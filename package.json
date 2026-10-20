@@ -1,0 +1,25 @@
+{
+  "name": "skribbl-clone",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-time multiplayer drawing and guessing game (Skribbl.io Clone)",
+  "scripts": {
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:backend": "npm --prefix backend run build",
+    "build:frontend": "npm --prefix frontend run build",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "migrate": "npm --prefix backend run migrate"
+  },
+  "keywords": [
+    "skribbl",
+    "multiplayer",
+    "socket.io",
+    "react",
+    "express",
+    "mysql"
+  ],
+  "author": "",
+  "license": "ISC"
+}

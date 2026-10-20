@@ -1,0 +1,62 @@
+# Patch Set: 00-architecture-baseline
+# Feature: Phase 0 — Architecture, Database Design & Project Documentation Baseline
+# Date: 2026-10-19
+# Description: Initial baseline architecture, 3NF database schema, Socket.IO protocol specification,
+#              requirements matrix, development roadmap, ADR log, and master project walkthrough.
+
+diff --git a/docs/reference/assignment.pdf b/docs/reference/assignment.pdf
+new file mode 100644
+index 0000000..assignment (binary copy from assignment specification)
+
+diff --git a/docs/architecture-and-database.pdf b/docs/architecture-and-database.pdf
+new file mode 100644
+index 0000000..arch-pdf (compiled 8-page architecture and ER reference)
+
+diff --git a/docs/requirements-checklist.md b/docs/requirements-checklist.md
+new file mode 100644
+--- /dev/null
++++ b/docs/requirements-checklist.md
+@@ -0,0 +1,110 @@
++# Requirements Implementation & Verification Checklist (Tracks 10 Must-Have, 4 Should-Have, 9 Nice-to-Have/Bonus, 5 Deliverables)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+new file mode 100644
+--- /dev/null
++++ b/docs/decisions.md
+@@ -0,0 +1,130 @@
++# Architectural Decision Records (ADR-001 through ADR-008)
+
+diff --git a/docs/database-schema.md b/docs/database-schema.md
+new file mode 100644
+--- /dev/null
++++ b/docs/database-schema.md
+@@ -0,0 +1,215 @@
++# MySQL Database Schema & Architecture (6 Tables: rooms, players, game_sessions, game_rounds, player_round_scores, words)
+
+diff --git a/docs/architecture.md b/docs/architecture.md
+new file mode 100644
+--- /dev/null
++++ b/docs/architecture.md
+@@ -0,0 +1,230 @@
++# System Architecture Specification — Skribbl.io Clone (React, Canvas, Express, Socket.IO, MySQL)
+
+diff --git a/docs/development-roadmap.md b/docs/development-roadmap.md
+new file mode 100644
+--- /dev/null
++++ b/docs/development-roadmap.md
+@@ -0,0 +1,145 @@
++# Phased Development Roadmap — Skribbl.io Clone (Phase 1 through Phase 11)
+
+diff --git a/docs/PROJECT_WALKTHROUGH.md b/docs/PROJECT_WALKTHROUGH.md
+new file mode 100644
+--- /dev/null
++++ b/docs/PROJECT_WALKTHROUGH.md
+@@ -0,0 +1,180 @@
++# Master Project Walkthrough — Skribbl.io Clone (Master Technical Interview Guide)
+
+diff --git a/docs/CHANGELOG.md b/docs/CHANGELOG.md
+new file mode 100644
+--- /dev/null
++++ b/docs/CHANGELOG.md
+@@ -0,0 +1,50 @@
++# Project Changelog & Strict Code-Change Record

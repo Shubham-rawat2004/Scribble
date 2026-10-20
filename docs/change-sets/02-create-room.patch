@@ -1,0 +1,104 @@
+# Patch Set: 02-create-room
+# Feature: Phase 2 — Room Creation & Settings Validation
+# Date: 2026-10-20
+# Description: Implements host room creation form with custom settings sliders, 8-avatar picker,
+#              6-character collision-free room code generation, in-memory OOP domain models
+#              (Room, Player, RoomManager), MySQL persistence to rooms and players tables,
+#              and isolated Socket.IO room channel membership.
+
+diff --git a/backend/src/types/room.ts b/backend/src/types/room.ts
+new file mode 100644
+--- /dev/null
++++ b/backend/src/types/room.ts
+@@ -0,0 +1,38 @@
++export interface RoomSettings {
++  maxPlayers: number;
++  totalRounds: number;
++  drawTimeSeconds: number;
++  wordOptionsCount: number;
++  hintsAllowed: number;
++  isPrivate: boolean;
++}
++export type RoomStatus = 'LOBBY' | 'PLAYING' | 'FINISHED' | 'ABANDONED';
++export interface PlayerDTO { ... }
++export interface RoomDTO { ... }
++export interface CreateRoomPayload { ... }
++export interface CreateRoomResponse { ... }
+
+diff --git a/backend/src/utils/codeGenerator.ts b/backend/src/utils/codeGenerator.ts
+new file mode 100644
+--- /dev/null
++++ b/backend/src/utils/codeGenerator.ts
+@@ -0,0 +1,12 @@
++const SAFE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
++export function generateRoomCode(length: number = 6): string { ... }
+
+diff --git a/backend/src/game/Player.ts b/backend/src/game/Player.ts
+new file mode 100644
+--- /dev/null
++++ b/backend/src/game/Player.ts
+@@ -0,0 +1,45 @@
++export class Player {
++  public readonly id: string;
++  public socketId: string;
++  public name: string;
++  public avatarId: string;
++  public isHost: boolean;
++  public score: number;
++  public isConnected: boolean;
++  ...
++}
+
+diff --git a/backend/src/game/Room.ts b/backend/src/game/Room.ts
+new file mode 100644
+--- /dev/null
++++ b/backend/src/game/Room.ts
+@@ -0,0 +1,60 @@
++export class Room {
++  public readonly id: string;
++  public name: string;
++  public hostName: string;
++  public hostPlayerId: string;
++  public settings: RoomSettings;
++  public status: RoomStatus;
++  public players: Map<string, Player>;
++  ...
++}
+
+diff --git a/backend/src/game/RoomManager.ts b/backend/src/game/RoomManager.ts
+new file mode 100644
+--- /dev/null
++++ b/backend/src/game/RoomManager.ts
+@@ -0,0 +1,85 @@
++export class RoomManager {
++  private rooms: Map<string, Room>;
++  private socketToPlayerMap: Map<string, { roomId: string, playerId: string }>;
++  public async createRoom(...): Promise<{ room: Room, host: Player }> { ... }
++  public getRoom(roomId: string): Room | undefined { ... }
++}
+
+diff --git a/backend/src/sockets/roomHandler.ts b/backend/src/sockets/roomHandler.ts
+new file mode 100644
+--- /dev/null
++++ b/backend/src/sockets/roomHandler.ts
+@@ -0,0 +1,75 @@
++export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
++  socket.on('create_room', async (payload, callback) => { ... });
++}
+
+diff --git a/frontend/src/components/AvatarPicker.tsx b/frontend/src/components/AvatarPicker.tsx
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/AvatarPicker.tsx
+@@ -0,0 +1,50 @@
++export const AVATARS = [
++  { id: 'avatar_1', name: 'Panda', emoji: '🐼' },
++  { id: 'avatar_2', name: 'Fox', emoji: '🦊' }, ...
++];
+
+diff --git a/frontend/src/pages/CreateRoom.tsx b/frontend/src/pages/CreateRoom.tsx
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/pages/CreateRoom.tsx
+@@ -0,0 +1,180 @@
++export const CreateRoom: React.FC<CreateRoomProps> = ({ onRoomCreated, onBack }) => { ... };

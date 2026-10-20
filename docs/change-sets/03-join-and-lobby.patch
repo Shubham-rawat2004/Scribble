@@ -1,0 +1,56 @@
+# Patch Set: 03-join-and-lobby
+# Feature: Phase 3 — Joining Rooms & Real-Time Lobby System
+# Date: 2026-10-20
+# Description: Implements join_room, real-time multiplayer lobby roster synchronization
+#              (player_joined, player_left), host-only authorization guards for start_game,
+#              host migration on departure, and MySQL persistence for joining players
+#              and game_sessions records.
+
+diff --git a/backend/src/types/room.ts b/backend/src/types/room.ts
+--- a/backend/src/types/room.ts
++++ b/backend/src/types/room.ts
+@@ -35,0 +36,18 @@
++export interface JoinRoomPayload {
++  roomId: string;
++  playerName: string;
++  avatarId?: string;
++}
++export interface JoinRoomResponse {
++  success: boolean;
++  roomId?: string;
++  room?: RoomDTO;
++  player?: PlayerDTO;
++  error?: string;
++}
++export interface GameSessionDTO { ... }
++export interface StartGameResponse { ... }
+
+diff --git a/backend/src/game/Room.ts b/backend/src/game/Room.ts
+--- a/backend/src/game/Room.ts
++++ b/backend/src/game/Room.ts
+@@ -45,0 +46,25 @@
++  public hasPlayerName(name: string): boolean { ... }
++  public canStartGame(): { canStart: boolean; reason?: string } { ... }
++  public removePlayer(playerId: string): { removed: boolean; newHost?: Player } { ... }
+
+diff --git a/backend/src/game/RoomManager.ts b/backend/src/game/RoomManager.ts
+--- a/backend/src/game/RoomManager.ts
++++ b/backend/src/game/RoomManager.ts
+@@ -85,0 +86,45 @@
++  public async joinRoom(...): Promise<{ room: Room, player: Player }> { ... }
++  public async startGame(roomId: string, socketId: string): Promise<{ room: Room, session: GameSessionDTO }> { ... }
++  public async handleDisconnect(socketId: string) { ... }
+
+diff --git a/frontend/src/pages/JoinRoom.tsx b/frontend/src/pages/JoinRoom.tsx
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/pages/JoinRoom.tsx
+@@ -0,0 +1,120 @@
++export const JoinRoom: React.FC<JoinRoomProps> = ({ ... }) => { ... };
+
+diff --git a/frontend/src/pages/Lobby.tsx b/frontend/src/pages/Lobby.tsx
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/pages/Lobby.tsx
+@@ -0,0 +1,160 @@
++export const Lobby: React.FC<LobbyProps> = ({ ... }) => { ... };
