@@ -1,7 +1,13 @@
 import { io, Socket } from 'socket.io-client';
 
-// Connect to backend server. In Vite development, either relative URL or direct backend origin
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+// Connect to backend server. In production/Render, defaults to current origin; in dev, localhost:5000
+const BACKEND_URL =
+  import.meta.env.VITE_BACKEND_URL ||
+  (typeof window !== 'undefined' &&
+  window.location.hostname !== 'localhost' &&
+  window.location.hostname !== '127.0.0.1'
+    ? window.location.origin
+    : 'http://localhost:5000');
 
 export const socket: Socket = io(BACKEND_URL, {
   autoConnect: true,

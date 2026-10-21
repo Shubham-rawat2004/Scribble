@@ -19,7 +19,9 @@ const dbConfig: mysql.PoolOptions = {
   multipleStatements: true,
 };
 
-export const pool = mysql.createPool(dbConfig);
+export const pool = process.env.DATABASE_URL
+  ? mysql.createPool({ uri: process.env.DATABASE_URL, multipleStatements: true, waitForConnections: true, connectionLimit: 10 })
+  : mysql.createPool(dbConfig);
 
 /**
  * Tests database connectivity by pinging the connection pool.
