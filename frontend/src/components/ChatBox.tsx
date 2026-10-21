@@ -212,30 +212,32 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 <div
                   key={msg.id}
                   style={{
-                    backgroundColor: '#ecfdf5',
-                    color: '#064e3b',
+                    backgroundColor: '#f0fdf4',
+                    color: '#15803d',
                     padding: '0.35rem 0.65rem',
                     borderRadius: '8px',
                     fontSize: '0.875rem',
                     wordBreak: 'break-word',
-                    border: '1px solid #a7f3d0',
+                    border: '1px solid #bbf7d0',
+                    boxShadow: '0 1px 2px rgba(16, 185, 129, 0.08)',
                   }}
                 >
                   <span
                     style={{
-                      fontSize: '0.72rem',
-                      backgroundColor: '#10b981',
+                      fontSize: '0.68rem',
+                      backgroundColor: '#16a34a',
                       color: '#ffffff',
-                      padding: '0.1rem 0.35rem',
+                      padding: '0.1rem 0.4rem',
                       borderRadius: '4px',
-                      fontWeight: 700,
+                      fontWeight: 800,
                       marginRight: '0.4rem',
+                      letterSpacing: '0.04em',
                     }}
                   >
-                    SOLVER
+                    GUESSER
                   </span>
-                  <span style={{ fontWeight: 800, color: '#047857' }}>{msg.senderName}: </span>
-                  <span>{msg.text}</span>
+                  <span style={{ fontWeight: 800, color: '#16a34a' }}>{msg.senderName}: </span>
+                  <span style={{ fontWeight: 600, color: '#15803d' }}>{msg.text}</span>
                 </div>
               );
             }

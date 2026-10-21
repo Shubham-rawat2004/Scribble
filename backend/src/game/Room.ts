@@ -138,13 +138,17 @@ export class Room {
     return this.players.has(playerId);
   }
 
+  public getActivePlayers(): Player[] {
+    return this.getPlayerList().filter((p) => p.isConnected);
+  }
+
   public canStartGame(): { canStart: boolean; reason?: string } {
     if (this.status !== 'LOBBY') {
       return { canStart: false, reason: 'Game is already in progress or completed.' };
     }
-    const activePlayers = this.getPlayerList().filter((p) => !p.isSpectator && p.isConnected);
+    const activePlayers = this.getActivePlayers();
     if (activePlayers.length < 2) {
-      return { canStart: false, reason: 'At least 2 active players (non-spectators) are required to start the game.' };
+      return { canStart: false, reason: 'At least 2 players are required to start the game.' };
     }
     return { canStart: true };
   }
@@ -208,8 +212,12 @@ export class Room {
     }
   }
 
-  public getChatHistory(): { id: string; senderId: string; senderName: string; text: string; type: string; timestamp: number }[] {
-    return [...this.chatHistory];
+  public getChatHistory(isPlayerSolvedOrDrawer: boolean = false): { id: string; senderId: string; senderName: string; text: string; type: string; timestamp: number }[] {
+    if (isPlayerSolvedOrDrawer) {
+      return [...this.chatHistory];
+    }
+    // Exclude GUESSED_CHAT for players who have not solved the word yet
+    return this.chatHistory.filter((m) => m.type !== 'GUESSED_CHAT');
   }
 
   public clearCanvas(): void {

@@ -22,7 +22,6 @@ export interface PlayerDTO {
   isHost: boolean;
   score: number;
   isConnected: boolean;
-  isSpectator?: boolean;
 }
 
 export interface RoomDTO {
@@ -55,7 +54,6 @@ export interface JoinRoomPayload {
   roomId: string;
   playerName: string;
   avatarId?: string;
-  isSpectator?: boolean;
 }
 
 export interface JoinRoomResponse {
@@ -177,10 +175,13 @@ export interface TurnEndPayload {
 // Phase 9: Game Over, Victory Podium & Match Statistics Contracts
 export interface GameOverPayload {
   roomId: string;
-  winner: PlayerDTO;
+  winner: PlayerDTO | null;
   podium: PlayerDTO[];
   leaderboard: PlayerDTO[];
   totalRoundsPlayed: number;
+  reason?: string;
+  message?: string;
+  winnerByDefault?: boolean;
 }
 
 

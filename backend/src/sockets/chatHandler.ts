@@ -95,19 +95,8 @@ export function registerChatHandlers(io: SocketIOServer, socket: Socket) {
         }
 
         case 'CORRECT_GUESS': {
-          // If player is a spectator, do not spoil or score; notify spectator privately
-          if (player.isSpectator) {
-            socket.emit('chat_message', {
-              id: msgId,
-              senderId: 'system',
-              senderName: 'System',
-              text: '🎉 You guessed the secret word! (Spectators do not earn score points)',
-              type: 'SYSTEM_INFO',
-              timestamp: now,
-            });
-            if (callback) callback({ success: true });
-            return;
-          }
+          // Immediately join the solved players chat channel
+          socket.join(`room_${room.id}_solved`);
 
           // Guesser solved the secret word!
           if (!turnManager) return;
@@ -121,7 +110,11 @@ export function registerChatHandlers(io: SocketIOServer, socket: Socket) {
             drawTime,
             guessOrder
           );
-          const newTotalScore = turnManager.awardGuesserPoints(player.id, scoreResult.totalPoints);
+          const newTotalScore = turnManager.awardGuesserPoints(
+            player.id,
+            scoreResult.totalPoints,
+            scoreResult.basePoints
+          );
 
           // 1. Send success event to room
           io.to(room.id).emit('player_guessed_correct', {
@@ -212,7 +205,9 @@ export function registerChatHandlers(io: SocketIOServer, socket: Socket) {
         }
 
         case 'ALREADY_GUESSED': {
-          // Option A: Message is broadcast exclusively to players who have already guessed + drawer
+          // Ensure sender socket is in the solved chat channel
+          socket.join(`room_${room.id}_solved`);
+
           const chatMsg: ChatMessageDTO = {
             id: msgId,
             senderId: player.id,
@@ -222,19 +217,34 @@ export function registerChatHandlers(io: SocketIOServer, socket: Socket) {
             timestamp: now,
           };
 
+          // Store in room history (filtered out for unsolved players)
+          room.addChatMessage(chatMsg);
+
+          // Broadcast strictly to solved players room and active drawer
+          io.to(`room_${room.id}_solved`).emit('chat_message', chatMsg);
+
+          // Redundant fallback to ensure all known solvers & drawer receive it
           if (turnManager) {
-            // Emit to each guessed player's socket
             for (const guessedId of turnManager.guessedPlayerIds) {
               const p = room.getPlayer(guessedId);
-              if (p) io.to(p.socketId).emit('chat_message', chatMsg);
+              if (p && p.socketId) {
+                const s = io.sockets.sockets.get(p.socketId);
+                if (s && !s.rooms.has(`room_${room.id}_solved`)) {
+                  s.join(`room_${room.id}_solved`);
+                  s.emit('chat_message', chatMsg);
+                }
+              }
             }
-            // Also emit to the active drawer
             if (turnManager.currentDrawerId) {
               const drawer = room.getPlayer(turnManager.currentDrawerId);
-              if (drawer) io.to(drawer.socketId).emit('chat_message', chatMsg);
+              if (drawer && drawer.socketId) {
+                const ds = io.sockets.sockets.get(drawer.socketId);
+                if (ds && !ds.rooms.has(`room_${room.id}_solved`)) {
+                  ds.join(`room_${room.id}_solved`);
+                  ds.emit('chat_message', chatMsg);
+                }
+              }
             }
-          } else {
-            socket.emit('chat_message', chatMsg);
           }
 
           if (callback) callback({ success: true });
@@ -270,7 +280,18 @@ export function registerChatHandlers(io: SocketIOServer, socket: Socket) {
     'get_chat_history',
     (data: { roomId: string }, callback?: (res: { messages: ChatMessageDTO[] }) => void) => {
       const room = roomManager.getRoom(data?.roomId);
-      const messages = room ? room.getChatHistory() as ChatMessageDTO[] : [];
+      if (!room) {
+        if (callback) callback({ messages: [] });
+        return;
+      }
+      const player = room.getPlayerBySocket(socket.id);
+      const turnManager = roomManager.getTurnManager(room.id);
+      const isSolvedOrDrawer = Boolean(
+        player &&
+          turnManager &&
+          (turnManager.hasPlayerGuessed(player.id) || turnManager.currentDrawerId === player.id)
+      );
+      const messages = room.getChatHistory(isSolvedOrDrawer) as ChatMessageDTO[];
       if (typeof callback === 'function') {
         callback({ messages });
       } else {

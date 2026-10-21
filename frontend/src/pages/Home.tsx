@@ -8,9 +8,9 @@ interface HomeProps {
   initialNickname?: string;
   initialAvatarId?: string;
   invitedRoomCode?: string;
-  onQuickPlay: (nickname: string, avatarId: string, roomCode?: string, isSpectator?: boolean) => void;
+  onQuickPlay: (nickname: string, avatarId: string, roomCode?: string) => void;
   onCreateRoom: (nickname: string, avatarId: string) => void;
-  onJoinRoom: (nickname: string, avatarId: string, roomCode: string, isSpectator?: boolean) => void;
+  onJoinRoom: (nickname: string, avatarId: string, roomCode: string) => void;
   onOpenCanvasSandbox: () => void;
   onOpenDiagnostics: () => void;
   isBackendHealthy: boolean;
@@ -32,7 +32,6 @@ export const Home: React.FC<HomeProps> = ({
   const [language, setLanguage] = useState<string>('English');
   const [manualRoomCode, setManualRoomCode] = useState<string>(invitedRoomCode);
   const [showManualJoin, setShowManualJoin] = useState<boolean>(!invitedRoomCode);
-  const [isSpectator, setIsSpectator] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   // Helper to extract clean 6-character room code from raw string or full URL
@@ -84,9 +83,9 @@ export const Home: React.FC<HomeProps> = ({
 
     const targetCode = invitedRoomCode || manualRoomCode.trim();
     if (targetCode) {
-      onJoinRoom(cleanName, avatarId, targetCode, isSpectator);
+      onJoinRoom(cleanName, avatarId, targetCode);
     } else {
-      onQuickPlay(cleanName, avatarId, undefined, isSpectator);
+      onQuickPlay(cleanName, avatarId);
     }
   };
 
@@ -108,7 +107,7 @@ export const Home: React.FC<HomeProps> = ({
       return;
     }
     setError(null);
-    onJoinRoom(cleanName, avatarId, cleanCode, isSpectator);
+    onJoinRoom(cleanName, avatarId, cleanCode);
   };
 
   return (
@@ -272,34 +271,6 @@ export const Home: React.FC<HomeProps> = ({
 
         {/* Skribbl Avatar Picker (< [Avatar] > + 🎲) */}
         <SkribblAvatarPicker selectedAvatarId={avatarId} onSelect={setAvatarId} size={110} />
-
-        {/* Join as Spectator Option */}
-        <div style={{ display: 'flex', justifyContent: 'center', margin: '0.65rem 0' }}>
-          <label
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              cursor: 'pointer',
-              fontSize: '0.88rem',
-              fontWeight: 700,
-              color: isSpectator ? '#6d28d9' : '#475569',
-              backgroundColor: isSpectator ? '#f5f3ff' : '#f8fafc',
-              border: `1.5px solid ${isSpectator ? '#c4b5fd' : '#e2e8f0'}`,
-              padding: '0.4rem 0.85rem',
-              borderRadius: '9999px',
-              transition: 'all 0.15s ease',
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={isSpectator}
-              onChange={(e) => setIsSpectator(e.target.checked)}
-              style={{ width: '15px', height: '15px', accentColor: '#7c3aed', cursor: 'pointer' }}
-            />
-            <span>Join as Spectator 👁️ (watch & chat only)</span>
-          </label>
-        </div>
 
         {/* Big Action Buttons */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', marginTop: '0.5rem' }}>

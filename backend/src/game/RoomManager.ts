@@ -94,8 +94,7 @@ export class RoomManager {
     roomIdInput: string,
     playerName: string,
     avatarId: string = 'avatar_1',
-    socketId: string,
-    isSpectator: boolean = false
+    socketId: string
   ): Promise<{ room: Room; player: Player }> {
     const roomId = roomIdInput.trim().toUpperCase();
     const room = this.rooms.get(roomId);
@@ -117,7 +116,7 @@ export class RoomManager {
     }
 
     const playerId = crypto.randomUUID();
-    const player = new Player(playerId, socketId, playerName, avatarId, false, 0, isSpectator);
+    const player = new Player(playerId, socketId, playerName, avatarId, false, 0);
 
     room.addPlayer(player);
     this.socketToPlayerMap.set(socketId, { roomId, playerId });

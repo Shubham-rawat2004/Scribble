@@ -18,7 +18,6 @@ import {
   UserX,
   UserMinus,
   Globe,
-  Eye,
 } from 'lucide-react';
 
 interface LobbyProps {
@@ -152,18 +151,6 @@ export const Lobby: React.FC<LobbyProps> = ({
       'vote_kick',
       { roomId: room.id, targetPlayerId },
       (res: { success: boolean; error?: string; votes?: number; threshold?: number }) => {
-        if (!res.success && res.error) {
-          setError(res.error);
-        }
-      }
-    );
-  };
-
-  const handleToggleSpectator = () => {
-    socket.emit(
-      'toggle_spectator',
-      { roomId: room.id },
-      (res: { success: boolean; isSpectator?: boolean; error?: string }) => {
         if (!res.success && res.error) {
           setError(res.error);
         }
@@ -420,26 +407,12 @@ export const Lobby: React.FC<LobbyProps> = ({
                             <Crown size={11} /> Host
                           </span>
                         )}
-                        {p.isSpectator ? (
-                          <span
-                            className="badge"
-                            style={{
-                              background: '#ede9fe',
-                              color: '#6d28d9',
-                              fontSize: '0.65rem',
-                              padding: '0.1rem 0.4rem',
-                            }}
-                          >
-                            <Eye size={11} /> Spectator
-                          </span>
-                        ) : (
-                          <span
-                            className="badge badge-success"
-                            style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}
-                          >
-                            Online
-                          </span>
-                        )}
+                        <span
+                          className="badge badge-success"
+                          style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}
+                        >
+                          Online
+                        </span>
                       </div>
                     </div>
 
@@ -497,50 +470,26 @@ export const Lobby: React.FC<LobbyProps> = ({
 
             {/* Action Zone: Host starts match; other players wait */}
             <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <button
-                  type="button"
-                  onClick={handleToggleSpectator}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.4rem',
-                    padding: '0.4rem 0.85rem',
-                    fontSize: '0.82rem',
-                    fontWeight: 700,
-                    borderRadius: '8px',
-                    border: '1.5px solid',
-                    borderColor: currentPlayer.isSpectator ? '#3b82f6' : '#8b5cf6',
-                    backgroundColor: currentPlayer.isSpectator ? '#eff6ff' : '#f5f3ff',
-                    color: currentPlayer.isSpectator ? '#1d4ed8' : '#6d28d9',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <Eye size={15} />
-                  {currentPlayer.isSpectator ? 'Switch to Active Player 🎮' : 'Switch to Spectator 👁️'}
-                </button>
-              </div>
-
               {isHost ? (
                 <div>
                   <button
                     className="btn btn-primary"
                     onClick={handleStartGame}
-                    disabled={starting || players.filter((p) => !p.isSpectator).length < 2}
+                    disabled={starting || players.length < 2}
                     style={{
                       width: '100%',
                       padding: '0.9rem',
                       fontSize: '1.1rem',
-                      opacity: players.filter((p) => !p.isSpectator).length < 2 ? 0.6 : 1,
-                      cursor: players.filter((p) => !p.isSpectator).length < 2 ? 'not-allowed' : 'pointer',
+                      opacity: players.length < 2 ? 0.6 : 1,
+                      cursor: players.length < 2 ? 'not-allowed' : 'pointer',
                     }}
                   >
                     <Play size={20} />
                     {starting ? 'Starting Game...' : 'Start Game'}
                   </button>
-                  {players.filter((p) => !p.isSpectator).length < 2 ? (
+                  {players.length < 2 ? (
                     <p style={{ textAlign: 'center', fontSize: '0.85rem', color: '#64748b', marginTop: '0.5rem' }}>
-                      Waiting for at least 2 active players to start (spectators do not draw)...
+                      Waiting for at least 2 players to start...
                     </p>
                   ) : (
                     <p style={{ textAlign: 'center', fontSize: '0.85rem', color: '#16a34a', fontWeight: 600, marginTop: '0.5rem' }}>
@@ -567,8 +516,8 @@ export const Lobby: React.FC<LobbyProps> = ({
                 >
                   <Clock size={19} className="animate-spin" color="#2563eb" />
                   <span>
-                    {players.filter((p) => !p.isSpectator).length < 2
-                      ? 'Waiting for at least 2 active players before host can start...'
+                    {players.length < 2
+                      ? 'Waiting for at least 2 players before host can start...'
                       : <>Waiting for host (<b>{room.hostName}</b>) to start the game...</>}
                   </span>
                 </div>

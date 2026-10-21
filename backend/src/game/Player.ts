@@ -11,7 +11,6 @@ export class Player {
   public isHost: boolean;
   public score: number;
   public isConnected: boolean;
-  public isSpectator: boolean;
 
   constructor(
     id: string,
@@ -19,8 +18,7 @@ export class Player {
     name: string,
     avatarId: string = 'avatar_1',
     isHost: boolean = false,
-    initialScore: number = 0,
-    isSpectator: boolean = false
+    initialScore: number = 0
   ) {
     this.id = id;
     this.socketId = socketId;
@@ -29,7 +27,6 @@ export class Player {
     this.isHost = isHost;
     this.score = initialScore;
     this.isConnected = true;
-    this.isSpectator = isSpectator;
   }
 
   public addScore(points: number): void {
@@ -59,7 +56,6 @@ export class Player {
       isHost: this.isHost,
       score: this.score,
       isConnected: this.isConnected,
-      isSpectator: this.isSpectator,
     };
   }
 }

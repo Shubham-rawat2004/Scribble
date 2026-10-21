@@ -1,6 +1,179 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { RoomManager } from '../game/RoomManager.js';
+import { Room } from '../game/Room.js';
 import { pool } from '../db/connection.js';
+import { PlayerDTO, GameOverPayload } from '../types/room.js';
+import crypto from 'crypto';
+
+/**
+ * Automatically terminates an active game when the active player count drops below 2
+ * (due to player disconnection, leaving, or being kicked).
+ * Immediately cancels ongoing rounds, stops drawing/guessing, clears all timers,
+ * declares the sole remaining active player as winner by default, and broadcasts game_over.
+ */
+export async function terminateGameDueToInsufficientPlayers(io: SocketIOServer, roomId: string) {
+  const roomManager = RoomManager.getInstance();
+  const room = roomManager.getRoom(roomId);
+  if (!room) return;
+
+  // Only terminate games that are currently in progress ('PLAYING')
+  if (room.status !== 'PLAYING') return;
+
+  // Immediate state transition to 'FINISHED' to prevent duplicate execution from race conditions
+  room.setStatus('FINISHED');
+
+  const turnManager = roomManager.getTurnManager(roomId);
+  if (turnManager) {
+    turnManager.clearAllTimers();
+    turnManager.turnPhase = 'MATCH_END';
+  }
+
+  // Clear canvas for all connected clients
+  room.clearCanvas();
+  io.to(room.id).emit('canvas_clear', { roomId: room.id });
+  io.in(`room_${roomId}_solved`).socketsLeave(`room_${roomId}_solved`);
+
+  // Identify remaining active players (connected)
+  const activePlayers = room.getActivePlayers();
+  const allConnected = room.getPlayerList().filter((p) => p.isConnected);
+
+  console.log(
+    `[Game] Auto-terminating match in room ${room.id} due to insufficient players (Active remaining: ${activePlayers.length}, Total connected: ${allConnected.length})`
+  );
+
+  let winner: PlayerDTO | null = null;
+  let podium: PlayerDTO[] = [];
+  let leaderboard: PlayerDTO[] = [];
+
+  if (activePlayers.length === 1) {
+    const solePlayer = activePlayers[0];
+    winner = solePlayer.toDTO();
+    podium = [solePlayer.toDTO()];
+    leaderboard = [
+      solePlayer.toDTO(),
+      ...allConnected.filter((p) => p.id !== solePlayer.id).map((p) => p.toDTO()),
+    ];
+  } else if (allConnected.length > 0) {
+    winner = allConnected[0].toDTO();
+    podium = [allConnected[0].toDTO()];
+    leaderboard = allConnected.map((p) => p.toDTO());
+  }
+
+  // Persist completed match status to MySQL
+  try {
+    if (turnManager && turnManager.sessionId) {
+      await pool.execute(
+        `UPDATE game_sessions 
+         SET status = 'COMPLETED', ended_at = NOW(), winner_player_id = ?, total_rounds_played = ?
+         WHERE session_id = ?`,
+        [winner?.id || null, turnManager.currentRound, turnManager.sessionId]
+      );
+    }
+    await pool.execute('UPDATE rooms SET status = ? WHERE room_id = ?', ['FINISHED', room.id]);
+    console.log(`[Game] Persisted auto-terminated match to MySQL for room ${room.id}. Winner: ${winner?.name}`);
+  } catch (err) {
+    console.error('[Game] Error persisting auto-terminated match to MySQL:', (err as Error).message);
+  }
+
+  const message = 'Game Over! All other players have left. You are the winner!';
+
+  // Announce in room chat feed
+  const winAnnouncement = {
+    id: crypto.randomUUID(),
+    senderId: 'system',
+    senderName: 'System',
+    text: winner
+      ? `Game Over! All other players have left. ${winner.name} is the winner!`
+      : 'Game Over! Not enough players to continue.',
+    type: 'SYSTEM_INFO',
+    timestamp: Date.now(),
+  };
+  room.addChatMessage(winAnnouncement);
+  io.to(room.id).emit('chat_message', winAnnouncement);
+
+  // Broadcast game_over with default winner, podium, and announcement message
+  const gameOverPayload: GameOverPayload = {
+    roomId: room.id,
+    winner,
+    podium,
+    leaderboard,
+    totalRoundsPlayed: turnManager ? turnManager.currentRound : 1,
+    reason: 'ALL_PLAYERS_LEFT',
+    message,
+    winnerByDefault: true,
+  };
+  io.to(room.id).emit('game_over', gameOverPayload);
+}
+
+/**
+ * Evaluates whether an active game should terminate due to insufficient players (< 2 active players),
+ * or whether the active drawer left and the turn should advance immediately.
+ */
+export async function handlePlayerLeftGameCheck(
+  io: SocketIOServer,
+  room: Room,
+  departedPlayerId?: string
+) {
+  if (room.status !== 'PLAYING') return;
+
+  const activePlayers = room.getActivePlayers();
+
+  // If active player count drops below 2, immediately terminate the match!
+  if (activePlayers.length < 2) {
+    await terminateGameDueToInsufficientPlayers(io, room.id);
+    return;
+  }
+
+  // Active players count is >= 2.
+  const roomManager = RoomManager.getInstance();
+  const turnManager = roomManager.getTurnManager(room.id);
+  if (!turnManager) return;
+
+  if (departedPlayerId) {
+    turnManager.removePlayerFromTurn(departedPlayerId);
+  }
+
+  // If the active drawer just departed, advance to next turn immediately!
+  if (departedPlayerId && turnManager.currentDrawerId === departedPlayerId) {
+    console.log(`[Game] Active drawer (${departedPlayerId}) left room ${room.id}. Advancing to next turn.`);
+    turnManager.clearAllTimers();
+    room.clearCanvas();
+    io.to(room.id).emit('canvas_clear', { roomId: room.id });
+
+    const drawerLeftMsg = {
+      id: crypto.randomUUID(),
+      senderId: 'system',
+      senderName: 'System',
+      text: 'The drawer left the game! Advancing to the next turn...',
+      type: 'SYSTEM_INFO',
+      timestamp: Date.now(),
+    };
+    room.addChatMessage(drawerLeftMsg);
+    io.to(room.id).emit('chat_message', drawerLeftMsg);
+
+    // Trigger next turn selection
+    setTimeout(() => {
+      if (room.status === 'PLAYING') {
+        triggerWordSelection(io, room.id);
+      }
+    }, 1500);
+    return;
+  }
+
+  // If a guesser departed, check if all remaining eligible guessers have now guessed
+  if (turnManager.turnPhase === 'DRAWING') {
+    const eligibleGuessers = room
+      .getActivePlayers()
+      .filter((p) => p.id !== turnManager.currentDrawerId);
+    if (
+      eligibleGuessers.length > 0 &&
+      eligibleGuessers.every((p) => turnManager.hasPlayerGuessed(p.id))
+    ) {
+      console.log(`[Game] All remaining guessers in room ${room.id} have guessed correctly after departure. Ending turn.`);
+      turnManager.endTurnEarly('ALL_GUESSED');
+    }
+  }
+}
 
 /**
  * Helper function: Finalizes the match, updates MySQL session, and broadcasts game_over with podium.
@@ -64,7 +237,16 @@ export async function executeStartDrawingTurn(
   room.clearCanvas();
   io.to(room.id).emit('canvas_clear', { roomId: room.id });
 
+  // Reset solved chat channel membership for the new turn
+  io.in(`room_${roomId}_solved`).socketsLeave(`room_${roomId}_solved`);
+
   const drawer = room.getPlayer(turnManager.currentDrawerId || '');
+  if (drawer?.socketId) {
+    const drawerSocket = io.sockets.sockets.get(drawer.socketId);
+    if (drawerSocket) {
+      drawerSocket.join(`room_${roomId}_solved`);
+    }
+  }
 
   // Start Drawing Turn with Progressive Hints and Countdown Timer
   const { secretWord, initialMask } = await turnManager.startDrawingTurn(
@@ -106,6 +288,9 @@ export async function executeStartDrawingTurn(
       const strokes = room.getStrokeHistory();
       room.setLastTurnInfo(secretWord, drawer?.name || 'Drawer', strokes);
 
+      // Reset solved channel on turn end
+      io.in(`room_${roomId}_solved`).socketsLeave(`room_${roomId}_solved`);
+
       io.to(room.id).emit('turn_end', {
         roomId: room.id,
         secretWord,
@@ -117,9 +302,12 @@ export async function executeStartDrawingTurn(
       });
 
       // Wait 4 seconds for players to review turn summary scoreboard, then advance
-      setTimeout(() => {
-        triggerWordSelection(io, roomId);
+      const postTimer = setTimeout(() => {
+        if (room.status === 'PLAYING') {
+          triggerWordSelection(io, roomId);
+        }
       }, 4000);
+      turnManager.setPostTurnTimeout(postTimer);
     }
   );
 
@@ -204,8 +392,9 @@ export async function triggerWordSelection(io: SocketIOServer, roomId: string) {
   // 3. Fallback: Auto-select first word if drawer is AFK or does not choose within 16 seconds
   const currentTurn = turnManager.currentTurn;
   const currentRound = turnManager.currentRound;
-  setTimeout(async () => {
+  const selTimeout = setTimeout(async () => {
     if (
+      room.status === 'PLAYING' &&
       turnManager.turnPhase === 'WORD_SELECTION' &&
       turnManager.currentTurn === currentTurn &&
       turnManager.currentRound === currentRound &&
@@ -216,6 +405,7 @@ export async function triggerWordSelection(io: SocketIOServer, roomId: string) {
       await executeStartDrawingTurn(io, roomId, autoWord);
     }
   }, (durationSeconds + 1) * 1000);
+  turnManager.setSelectionTimeout(selTimeout);
 }
 
 /**
@@ -284,6 +474,7 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket) {
       // Reset room state and player scores
       room.setStatus('LOBBY');
       room.setCurrentDrawer(null);
+      io.in(`room_${data.roomId}_solved`).socketsLeave(`room_${data.roomId}_solved`);
       for (const p of room.getPlayerList()) {
         p.resetScore();
       }

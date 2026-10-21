@@ -13,28 +13,30 @@ console.log('--- Test 1: Pure Scoring Formulas (Speed Decay, Order Bonus & Drawe
 
 // Speed decay
 const maxFastGuess = ScoringEngine.calculateGuesserScore(80, 80, 1);
-assert.strictEqual(maxFastGuess.basePoints, 500, 'Max base points at 100% time should be 500');
+assert.strictEqual(maxFastGuess.basePoints, 400, 'Max base points at 100% time should be 400');
 assert.strictEqual(maxFastGuess.orderBonus, 50, '1st place bonus should be 50');
-assert.strictEqual(maxFastGuess.totalPoints, 550, 'Max total points should be 550');
+assert.strictEqual(maxFastGuess.totalPoints, 450, 'Max total points should be 450');
 console.log('✅ Instant guess (80s/80s, 1st place):', maxFastGuess);
 
 const midGuess = ScoringEngine.calculateGuesserScore(40, 80, 2);
-assert.strictEqual(midGuess.basePoints, 300, 'Base points at 50% time should be 300');
+assert.strictEqual(midGuess.basePoints, 225, 'Base points at 50% time should be 225');
 assert.strictEqual(midGuess.orderBonus, 25, '2nd place bonus should be 25');
-assert.strictEqual(midGuess.totalPoints, 325, 'Mid guess total points should be 325');
+assert.strictEqual(midGuess.totalPoints, 250, 'Mid guess total points should be 250');
 console.log('✅ Mid guess (40s/80s, 2nd place):', midGuess);
 
 const slowGuess = ScoringEngine.calculateGuesserScore(0, 80, 3);
-assert.strictEqual(slowGuess.basePoints, 100, 'Min base points at 0% time should be 100');
+assert.strictEqual(slowGuess.basePoints, 50, 'Min base points at 0% time should be 50');
 assert.strictEqual(slowGuess.orderBonus, 10, '3rd place bonus should be 10');
-assert.strictEqual(slowGuess.totalPoints, 110, 'Slow guess total points should be 110');
+assert.strictEqual(slowGuess.totalPoints, 60, 'Slow guess total points should be 60');
 console.log('✅ Slow guess (0s/80s, 3rd place):', slowGuess);
 
-// Drawer rewards
-assert.strictEqual(ScoringEngine.calculateDrawerScore(0, 3), 0, '0 solvers must yield 0 drawer points');
-assert.strictEqual(ScoringEngine.calculateDrawerScore(1, 2), 250, '1/2 solvers must yield 250 drawer points');
-assert.strictEqual(ScoringEngine.calculateDrawerScore(2, 2), 500, '2/2 solvers must yield 500 drawer points');
-console.log('✅ Drawer points formula verified (0/3 = 0, 1/2 = 250, 2/2 = 500)');
+// Drawer speed-weighted rewards
+assert.strictEqual(ScoringEngine.calculateDrawerScore([], 3), 0, '0 solvers must yield 0 drawer points');
+assert.strictEqual(ScoringEngine.calculateDrawerScore([350], 1), 350, '1 fast solver (350) out of 1 guesser must yield 350 drawer points');
+assert.strictEqual(ScoringEngine.calculateDrawerScore([100], 1), 100, '1 slow solver (100) out of 1 guesser must yield 100 drawer points');
+assert.strictEqual(ScoringEngine.calculateDrawerScore([300, 300], 2), 300, '2 solvers (avg 300) out of 2 guessers must yield 300 drawer points');
+assert.strictEqual(ScoringEngine.calculateDrawerScore([300], 2), 150, '1 solver (300) out of 2 guessers must yield 150 drawer points (half ratio)');
+console.log('✅ Speed-weighted drawer points formula verified successfully!');
 
 // --- 2. Multi-Client Socket Real-Time Flow & Leaderboard Sync ---
 console.log('\n--- Test 2: Multi-Client Real-Time Scoring Flow & MySQL Persistence ---');
@@ -146,11 +148,11 @@ function setupGameFlow() {
       assert.ok(bobPointsEarned > charliePointsEarned, `Bob (${bobPointsEarned}) must earn more points than Charlie (${charliePointsEarned})`);
       console.log(`✅ Speed & order bonus verified: Bob (${bobPointsEarned} pts) > Charlie (${charliePointsEarned} pts)`);
 
-      // Verify Drawer Alice got 500 drawer points because 2/2 solved
+      // Verify Drawer Alice got speed-weighted drawer points because 2/2 solved quickly
       const aliceSummary = endData.roundScores.find(r => r.playerId === alicePlayerId);
       assert.ok(aliceSummary);
-      assert.strictEqual(aliceSummary.pointsEarned, 500, 'Drawer Alice must receive 500 points (2/2 solvers)');
-      console.log('✅ Drawer points verified: Alice received 500 drawer points!');
+      assert.strictEqual(aliceSummary.pointsEarned, 400, 'Drawer Alice must receive 400 points (2/2 fast solvers)');
+      console.log('✅ Speed-weighted drawer points verified: Alice received 400 drawer points!');
 
       // Step D: Verify MySQL database persistence
       console.log('\n--- Action D: Verifying MySQL database persistence ---');

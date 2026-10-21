@@ -16,8 +16,8 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
   onReturnToLobby,
   onLeave,
 }) => {
-  const { winner, podium, leaderboard, totalRoundsPlayed } = gameOverData;
-  const isHost = currentPlayer.isHost;
+  const { winner, podium, leaderboard, totalRoundsPlayed, message, winnerByDefault } = gameOverData;
+  const isHost = currentPlayer.isHost || Boolean(winner && winner.id === currentPlayer.id);
 
   const firstPlace = podium[0] || null;
   const secondPlace = podium[1] || null;
@@ -67,8 +67,8 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
             overflow: 'hidden',
           }}
         >
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#93c5fd' }}>
-            <Sparkles size={18} /> Match Complete ({totalRoundsPlayed} Rounds)
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: winnerByDefault ? '#fde047' : '#93c5fd' }}>
+            <Sparkles size={18} /> {winnerByDefault ? 'Match Terminated Early' : `Match Complete (${totalRoundsPlayed} Rounds)`}
           </div>
           <h1
             style={{
@@ -83,12 +83,35 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
               gap: '0.6rem',
             }}
           >
-            <Trophy size={38} color="#eab308" /> VICTORY PODIUM!
+            <Trophy size={38} color="#eab308" /> {winnerByDefault ? 'WINNER BY DEFAULT!' : 'VICTORY PODIUM!'}
           </h1>
           <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.95rem', color: '#e0f2fe', fontWeight: 600 }}>
             Winner: <b style={{ color: '#ffffff' }}>{winner?.name || 'Player'}</b> with <b>{winner?.score || 0} pts</b>!
           </p>
         </div>
+
+        {/* Default Winner Notice matching Requirement 4 */}
+        {message && (
+          <div
+            style={{
+              backgroundColor: '#fef3c7',
+              borderBottom: '2px solid #fcd34d',
+              padding: '0.85rem 1.25rem',
+              textAlign: 'center',
+              color: '#92400e',
+              fontWeight: 800,
+              fontSize: '1.05rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.6rem',
+              boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.05)',
+            }}
+          >
+            <span style={{ fontSize: '1.25rem' }}>🏆</span>
+            <span>{message}</span>
+          </div>
+        )}
 
         {/* 3-Tier Olympic Podium */}
         <div

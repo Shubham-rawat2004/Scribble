@@ -5,14 +5,15 @@ import { useCanvas } from '../hooks/useCanvas';
 import { Canvas } from '../components/Canvas';
 import { CanvasToolbar } from '../components/CanvasToolbar';
 import { SkribblAvatar } from '../components/SkribblAvatar';
-import { WordPickerModal, WordChoice } from '../components/WordPickerModal';
+import { WordPickerOverlay, WordChoice } from '../components/WordPickerOverlay';
 import { WordMaskBar } from '../components/WordMaskBar';
 import { ChatBox } from '../components/ChatBox';
 import { TurnScoreboardModal } from '../components/TurnScoreboardModal';
 import { GameOverModal } from '../components/GameOverModal';
 import { StrokeReplayModal } from '../components/StrokeReplayModal';
+import { SkribblAlarmClock } from '../components/SkribblAlarmClock';
 import { DrawStroke } from '../types/canvas';
-import { LogOut, Pencil, Eye, Trophy, Sparkles, CheckCircle2, UserX, UserMinus, Film } from 'lucide-react';
+import { LogOut, Pencil, Eye, Trophy, CheckCircle2, UserX, UserMinus, Film, ChevronUp, ChevronDown } from 'lucide-react';
 
 interface GameViewProps {
   room: RoomDTO;
@@ -70,9 +71,10 @@ export const GameView: React.FC<GameViewProps> = ({
     strokes: DrawStroke[];
   } | null>(null);
   const [showReplayModal, setShowReplayModal] = useState<boolean>(false);
+  const [showToolbar, setShowToolbar] = useState<boolean>(true);
 
-  // Is current client the designated drawer? (Spectators never draw)
-  const isDrawer = !currentPlayer.isSpectator && currentPlayer.id === currentDrawerId;
+  // Is current client the designated drawer?
+  const isDrawer = currentPlayer.id === currentDrawerId;
   const drawerPlayer = players.find((p) => p.id === currentDrawerId) || players[0];
 
   // Canvas hook with dual-mode (Drawer emitting vs Guesser listening)
@@ -132,7 +134,7 @@ export const GameView: React.FC<GameViewProps> = ({
     socket.emit('return_to_lobby', { roomId: room.id });
   };
 
-  // Socket listener setup for remote spectators and turn transitions
+  // Socket listener setup for remote guessers and turn transitions
   useEffect(() => {
     // 1. Initial hydration request for current round's drawing
     socket.emit('request_canvas_state', { roomId: room.id }, (res?: { strokes: any[] }) => {
@@ -198,8 +200,11 @@ export const GameView: React.FC<GameViewProps> = ({
       setPlayers(data.players);
     };
 
-    const onPlayerLeft = (data: { players: PlayerDTO[] }) => {
+    const onPlayerLeft = (data: { players: PlayerDTO[]; newHostId?: string }) => {
       setPlayers(data.players);
+      if (data.newHostId && data.newHostId === currentPlayer.id) {
+        currentPlayer.isHost = true;
+      }
     };
 
     // 3. Word Selection Listeners
@@ -343,6 +348,9 @@ export const GameView: React.FC<GameViewProps> = ({
     const onGameOver = (data: GameOverPayload) => {
       setGameOverData(data);
       setTurnEndSummary(null);
+      setShowWordPicker(false);
+      setDrawerChoosingBanner(null);
+      setTurnEndedWord(null);
     };
 
     const onReturnedToLobby = (data: { room: RoomDTO }) => {
@@ -445,23 +453,14 @@ export const GameView: React.FC<GameViewProps> = ({
     <div
       style={{
         width: '100%',
-        maxWidth: '1280px',
+        maxWidth: '1380px',
         margin: '0 auto',
-        padding: '1rem',
+        padding: '0.75rem 1rem',
         display: 'flex',
         flexDirection: 'column',
-        gap: '1rem',
+        gap: '0.85rem',
       }}
     >
-      {/* Drawer Word Selection Modal (Only shown to active drawer) */}
-      {showWordPicker && (
-        <WordPickerModal
-          words={wordOptions}
-          durationSeconds={15}
-          onSelectWord={handleSelectWord}
-        />
-      )}
-
       {/* End-of-Turn Score Summary Modal */}
       {turnEndSummary && !gameOverData && (
         <TurnScoreboardModal
@@ -494,62 +493,38 @@ export const GameView: React.FC<GameViewProps> = ({
         />
       )}
 
-      {/* Top Match Status Header */}
+      {/* Top Match Status Header (Matching Skribbl.io Screenshot 1443 & 1444) */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: '1rem',
           background: '#ffffff',
-          padding: '0.85rem 1.25rem',
-          borderRadius: '16px',
-          border: '2px solid #1e293b',
+          padding: '0.6rem 1.25rem',
+          borderRadius: '8px',
+          border: '3px solid #1e293b',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+          minHeight: '62px',
         }}
       >
-        {/* Left: Room & Round Info */}
+        {/* Left: Skribbl Alarm Clock + Round Counter (Screenshot 1443 & 1444) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-          <div>
-            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
-              Room {room.id}
-            </span>
-            <div style={{ fontWeight: 800, fontSize: '1.05rem', color: '#1e3a8a' }}>
-              Round {currentRound} of {room.settings.totalRounds} (Turn {currentTurn}/{totalTurnsInRound})
-            </div>
+          <SkribblAlarmClock timeRemaining={showWordPicker ? 15 : timeRemaining} size={46} />
+          <div style={{ fontWeight: 900, fontSize: '1.25rem', color: '#0f172a', letterSpacing: '-0.01em' }}>
+            Round {currentRound} of {room.settings.totalRounds}
           </div>
         </div>
 
-        {/* Center: Dynamic Word / Mask Bar or Waiting State */}
-        <div style={{ textAlign: 'center' }}>
-          {drawerChoosingBanner ? (
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                padding: '0.45rem 1.25rem',
-                borderRadius: '9999px',
-                background: '#fef3c7',
-                border: '2px solid #f59e0b',
-                color: '#b45309',
-                fontWeight: 800,
-                fontSize: '0.95rem',
-              }}
-            >
-              <Sparkles size={18} /> {drawerChoosingBanner}
-            </div>
-          ) : (
-            <WordMaskBar
-              isDrawer={isDrawer}
-              secretWord={secretWordForDrawer}
-              wordMask={wordMask}
-              wordLength={wordLength}
-              timeRemaining={timeRemaining}
-              gameMode={room.settings.gameMode}
-            />
-          )}
+        {/* Center: Dynamic Word / Mask Bar or WAITING (Screenshot 1443 & 1444) */}
+        <div style={{ textAlign: 'center', flex: 1, padding: '0 1rem' }}>
+          <WordMaskBar
+            isDrawer={isDrawer}
+            secretWord={secretWordForDrawer}
+            wordMask={wordMask}
+            wordLength={wordLength}
+            gameMode={room.settings.gameMode}
+            isChoosing={Boolean(showWordPicker || drawerChoosingBanner)}
+          />
         </div>
 
         {/* Right: Replay Button & Leave Game */}
@@ -608,33 +583,11 @@ export const GameView: React.FC<GameViewProps> = ({
         </div>
       )}
 
-      {/* Dedicated Spectator Mode Banner */}
-      {currentPlayer.isSpectator && (
-        <div
-          style={{
-            background: '#f5f3ff',
-            border: '2px solid #c4b5fd',
-            borderRadius: '12px',
-            padding: '0.65rem 1.25rem',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.65rem',
-            color: '#6d28d9',
-            fontWeight: 800,
-            fontSize: '0.92rem',
-            boxShadow: '0 2px 4px rgba(124, 58, 237, 0.08)',
-          }}
-        >
-          <Eye size={20} color="#7c3aed" />
-          <span>Spectator Mode Active: You are watching the match live without drawing turns.</span>
-        </div>
-      )}
-
       {/* Main Game Arena Grid: 3-column layout (Roster | Canvas | Chat) */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'minmax(180px, 200px) 1fr minmax(260px, 300px)',
+          gridTemplateColumns: '175px 1fr 300px',
           gap: '1rem',
           alignItems: 'start',
         }}
@@ -643,13 +596,15 @@ export const GameView: React.FC<GameViewProps> = ({
         <div
           style={{
             background: '#ffffff',
-            borderRadius: '16px',
-            border: '2px solid #1e293b',
-            padding: '1rem',
+            borderRadius: '8px',
+            border: '3px solid #1e293b',
+            padding: '0.75rem',
             boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
             display: 'flex',
             flexDirection: 'column',
             gap: '0.6rem',
+            height: '580px',
+            boxSizing: 'border-box',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.5rem' }}>
@@ -661,7 +616,7 @@ export const GameView: React.FC<GameViewProps> = ({
             </span>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '520px', overflowY: 'auto' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1, overflowY: 'auto' }}>
             {[...players]
               .sort((a, b) => (b.score || 0) - (a.score || 0))
               .map((p, idx) => {
@@ -677,44 +632,29 @@ export const GameView: React.FC<GameViewProps> = ({
                     style={{
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '0.6rem',
-                      padding: '0.5rem 0.65rem',
-                      borderRadius: '10px',
+                      gap: '0.5rem',
+                      padding: '0.45rem 0.6rem',
+                      borderRadius: '8px',
                       background: isGuessed ? '#f0fdf4' : isTurnDrawer ? '#fefce8' : isSelf ? '#eff6ff' : '#f8fafc',
                       border: isGuessed ? '2px solid #22c55e' : isTurnDrawer ? '2px solid #eab308' : isSelf ? '1.5px solid #3b82f6' : '1px solid #e2e8f0',
                       transition: 'all 0.25s ease',
                     }}
                   >
                     {/* Rank medal / number */}
-                    <span style={{ fontWeight: 800, fontSize: '0.85rem', color: '#64748b', width: '22px', textAlign: 'center' }}>
+                    <span style={{ fontWeight: 800, fontSize: '0.85rem', color: '#64748b', width: '20px', textAlign: 'center' }}>
                       {rankBadge}
                     </span>
 
                     {/* Player Avatar */}
-                    <SkribblAvatar avatarId={p.avatarId} size={34} />
+                    <SkribblAvatar avatarId={p.avatarId} size={32} />
 
                     {/* Player Name and Score */}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {p.name} {isSelf && '(You)'}
-                        {p.isSpectator && (
-                          <span
-                            style={{
-                              fontSize: '0.68rem',
-                              color: '#7c3aed',
-                              backgroundColor: '#ede9fe',
-                              padding: '0.05rem 0.35rem',
-                              borderRadius: '4px',
-                              fontWeight: 800,
-                              marginLeft: '0.35rem',
-                            }}
-                          >
-                            Spectator
-                          </span>
-                        )}
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#16a34a' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#16a34a' }}>
                           {p.score || 0} pts
                         </span>
                         {/* Live Score Increment Popup */}
@@ -739,12 +679,12 @@ export const GameView: React.FC<GameViewProps> = ({
                     {/* Drawer Pencil or Guessed Checkmark Badge */}
                     {isTurnDrawer && (
                       <span title="Drawing now!" style={{ color: '#eab308', display: 'inline-flex' }}>
-                        <Pencil size={16} />
+                        <Pencil size={15} />
                       </span>
                     )}
                     {isGuessed && (
                       <span title="Guessed the word!" style={{ color: '#16a34a', display: 'inline-flex' }}>
-                        <CheckCircle2 size={16} />
+                        <CheckCircle2 size={15} />
                       </span>
                     )}
 
@@ -796,10 +736,10 @@ export const GameView: React.FC<GameViewProps> = ({
           </div>
         </div>
 
-        {/* Center Column: Canvas + Role-Restricted Controls */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-          {/* Canvas Component */}
-          <div style={{ width: '100%', height: '500px', position: 'relative' }}>
+        {/* Center Column: Canvas + In-Canvas Word Picker Overlay + Role Controls */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+          {/* Canvas Component with In-Canvas Overlays (Exact Skribbl Dimensions) */}
+          <div style={{ width: '100%', height: '580px', position: 'relative' }}>
             <Canvas
               canvasRef={canvasRef}
               tool={tool}
@@ -807,32 +747,96 @@ export const GameView: React.FC<GameViewProps> = ({
               size={size}
               readOnly={!isDrawer}
               pointerHandlers={pointerHandlers}
-            />
+            >
+              {/* Word Selection In-Canvas Overlay (Visible ONLY to active Drawer - Screenshot 1443) */}
+              {showWordPicker && isDrawer && (
+                <WordPickerOverlay
+                  words={wordOptions}
+                  durationSeconds={15}
+                  onSelectWord={handleSelectWord}
+                />
+              )}
+
+              {/* Guesser In-Canvas Choosing Word Overlay */}
+              {drawerChoosingBanner && !isDrawer && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: '#2c3545',
+                    zIndex: 25,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.85rem',
+                    animation: 'fadeIn 0.15s ease',
+                  }}
+                >
+                  <div style={{ fontSize: '2.1rem', fontWeight: 800, color: '#ffffff', letterSpacing: '0.03em', fontFamily: "'Nunito', 'Segoe UI', system-ui, sans-serif" }}>
+                    {drawerChoosingBanner}
+                  </div>
+                  <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#94a3b8' }}>
+                    Waiting for the drawer to pick a word...
+                  </div>
+                </div>
+              )}
+            </Canvas>
           </div>
 
           {/* Controls Area: ONLY VISIBLE TO THE ACTIVE DRAWER! */}
           {isDrawer ? (
-            <div style={{ animation: 'fadeIn 0.2s ease' }}>
-              <CanvasToolbar
-                tool={tool}
-                color={color}
-                size={size}
-                canUndo={canUndo}
-                onSelectTool={setTool}
-                onSelectColor={setColor}
-                onSelectSize={setSize}
-                onUndo={handleUndo}
-                onClear={handleClear}
-              />
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
+              {/* Small collapse toggle arrow matching Screenshot 1444 */}
+              <button
+                type="button"
+                onClick={() => setShowToolbar((prev) => !prev)}
+                title={showToolbar ? 'Collapse Toolbar' : 'Expand Toolbar'}
+                style={{
+                  background: '#ffffff',
+                  border: '2px solid #1e293b',
+                  borderBottom: 'none',
+                  borderRadius: '6px 6px 0 0',
+                  padding: '0.1rem 0.85rem',
+                  cursor: 'pointer',
+                  color: '#475569',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: '-2px',
+                  zIndex: 2,
+                }}
+              >
+                {showToolbar ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+              </button>
+
+              {showToolbar && (
+                <div style={{ width: '100%', animation: 'fadeIn 0.15s ease' }}>
+                  <CanvasToolbar
+                    tool={tool}
+                    color={color}
+                    size={size}
+                    canUndo={canUndo}
+                    onSelectTool={setTool}
+                    onSelectColor={setColor}
+                    onSelectSize={setSize}
+                    onUndo={handleUndo}
+                    onClear={handleClear}
+                  />
+                </div>
+              )}
             </div>
           ) : (
-            /* Guesser Spectator Card: Controls are completely restricted */
+            /* Guesser Card: Controls are restricted during guessing */
             <div
               style={{
                 background: '#ffffff',
-                borderRadius: '14px',
+                borderRadius: '8px',
                 border: '2px solid #cbd5e1',
-                padding: '0.75rem 1.25rem',
+                padding: '0.65rem 1.25rem',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
@@ -896,7 +900,7 @@ export const GameView: React.FC<GameViewProps> = ({
         </div>
 
         {/* Right Column: Interactive Real-Time Game Chat & Guess Verification */}
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '580px' }}>
           <ChatBox
             messages={messages}
             onSendMessage={handleSendMessage}

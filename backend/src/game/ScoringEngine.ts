@@ -12,11 +12,11 @@ export class ScoringEngine {
    *
    * Formula:
    * TimeRatio = timeRemaining / totalDrawTime
-   * BasePoints = round(100 + 400 * TimeRatio)
-   * OrderBonus: 1st: +50, 2nd: +25, 3rd: +10
-   * Total = BasePoints + OrderBonus
+   * BasePoints = round(50 + 350 * TimeRatio)
+   * OrderBonus: 1st: +50, 2nd: +25, 3rd: +10, 4th+: 0
+   * Total = min(500, BasePoints + OrderBonus)
    *
-   * Bounds: [100, 550]
+   * Bounds: [50, 500]
    */
   public static calculateGuesserScore(
     timeRemaining: number,
@@ -27,7 +27,7 @@ export class ScoringEngine {
     const clampedTimeRemaining = Math.max(0, Math.min(validTotalTime, timeRemaining));
     const timeRatio = clampedTimeRemaining / validTotalTime;
 
-    const basePoints = Math.round(100 + 400 * timeRatio);
+    const basePoints = Math.round(50 + 350 * timeRatio);
 
     let orderBonus = 0;
     if (guessOrder === 1) {
@@ -38,7 +38,7 @@ export class ScoringEngine {
       orderBonus = 10;
     }
 
-    const totalPoints = basePoints + orderBonus;
+    const totalPoints = Math.min(500, basePoints + orderBonus);
 
     return {
       basePoints,
@@ -49,20 +49,38 @@ export class ScoringEngine {
   }
 
   /**
-   * Calculates points awarded to the drawer based on the fraction of guessers who solved the drawing.
+   * Calculates points awarded to the drawer based on how quickly and how many
+   * players guessed their drawing (speed-weighted solver ratio).
    *
    * Formula:
-   * If solvers == 0: 0 points
-   * If solvers > 0: round(500 * (solvers / totalGuessers))
+   * AverageSolverPoints = sum(solverBasePoints) / solversCount
+   * SolverRatio = min(1, solversCount / totalEligibleGuessers)
+   * DrawerPoints = round(AverageSolverPoints * SolverRatio)
    *
-   * Bounds: [0, 500]
+   * Bounds: [0, 400]
    */
-  public static calculateDrawerScore(solversCount: number, totalGuessers: number): number {
-    if (totalGuessers <= 0 || solversCount <= 0) {
+  public static calculateDrawerScore(
+    solverBasePoints: number[] | number,
+    totalEligibleGuessers?: number
+  ): number {
+    // Overload support if passed as (solversCount: number, totalGuessers: number)
+    if (typeof solverBasePoints === 'number') {
+      const solversCount = solverBasePoints;
+      const totalGuessers = totalEligibleGuessers || 1;
+      if (totalGuessers <= 0 || solversCount <= 0) return 0;
+      const fraction = Math.min(1, solversCount / totalGuessers);
+      return Math.round(400 * fraction);
+    }
+
+    const totalGuessers = Math.max(1, totalEligibleGuessers || 1);
+    if (!solverBasePoints || solverBasePoints.length === 0) {
       return 0;
     }
 
-    const fraction = Math.min(1, solversCount / totalGuessers);
-    return Math.round(500 * fraction);
+    const sum = solverBasePoints.reduce((acc, pts) => acc + pts, 0);
+    const averageSolverPoints = sum / solverBasePoints.length;
+    const solverRatio = Math.min(1, solverBasePoints.length / totalGuessers);
+
+    return Math.round(averageSolverPoints * solverRatio);
   }
 }

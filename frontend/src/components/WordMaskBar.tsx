@@ -1,5 +1,4 @@
 import React from 'react';
-import { Clock } from 'lucide-react';
 
 interface WordMaskBarProps {
   isDrawer: boolean;
@@ -8,6 +7,7 @@ interface WordMaskBarProps {
   wordLength?: number;
   timeRemaining?: number;
   gameMode?: string;
+  isChoosing?: boolean;
 }
 
 export const WordMaskBar: React.FC<WordMaskBarProps> = ({
@@ -15,101 +15,136 @@ export const WordMaskBar: React.FC<WordMaskBarProps> = ({
   secretWord = '',
   wordMask = '',
   wordLength = 0,
-  timeRemaining = 80,
   gameMode = 'Normal',
+  isChoosing = false,
 }) => {
-  const isTimeCritical = timeRemaining <= 15;
+  if (isChoosing) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <span
+          style={{
+            fontSize: '1.25rem',
+            fontWeight: 900,
+            color: '#0f172a',
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+          }}
+        >
+          WAITING
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div
       style={{
-        display: 'inline-flex',
+        display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
-        gap: '1rem',
-        background: '#f8fafc',
-        border: '2px solid #cbd5e1',
-        borderRadius: '9999px',
-        padding: '0.45rem 1.25rem',
-        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
+        justifyContent: 'center',
       }}
     >
-      {/* 1. Timer Indicator */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.35rem',
-          fontWeight: 900,
-          fontSize: '1.1rem',
-          color: isTimeCritical ? '#ef4444' : '#1e3a8a',
-          animation: isTimeCritical ? 'pulse 1s infinite' : 'none',
-        }}
-      >
-        <Clock size={18} strokeWidth={2.5} />
-        <span>{timeRemaining}s</span>
-      </div>
-
-      <div style={{ width: '1px', height: '20px', background: '#cbd5e1' }} />
-
-      {/* 2. Word Display: Plaintext for Drawer, Mask for Guesser */}
+      {/* Drawer: DRAW THIS + Word (matching Screenshot 1444) */}
       {isDrawer ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#16a34a', textTransform: 'uppercase' }}>
-            Word:
-          </span>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <span
             style={{
-              fontSize: '1.35rem',
-              fontWeight: 900,
-              color: '#0f172a',
-              letterSpacing: '0.08em',
+              fontSize: '0.76rem',
+              fontWeight: 800,
+              color: '#475569',
+              letterSpacing: '0.1em',
               textTransform: 'uppercase',
+              lineHeight: 1,
+              marginBottom: '2px',
             }}
           >
-            {secretWord}
+            DRAW THIS
           </span>
-          <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b' }}>
-            ({secretWord.length})
-          </span>
-          {gameMode === 'Hidden' && (
-            <span style={{ background: '#fef3c7', color: '#92400e', fontSize: '0.68rem', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 700 }}>
-              Hidden
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+            <span
+              style={{
+                fontSize: '1.75rem',
+                fontWeight: 900,
+                color: '#0f172a',
+                letterSpacing: '0.04em',
+                lineHeight: 1.1,
+              }}
+            >
+              {secretWord ? secretWord.toLowerCase() : ''}
             </span>
-          )}
-          {gameMode === 'Combination' && (
-            <span style={{ background: '#ede9fe', color: '#6d28d9', fontSize: '0.68rem', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 700 }}>
-              Combination
-            </span>
-          )}
+            {gameMode && gameMode !== 'Normal' && (
+              <span
+                style={{
+                  fontSize: '0.65rem',
+                  fontWeight: 800,
+                  backgroundColor: gameMode === 'Hidden' ? '#fef3c7' : '#ede9fe',
+                  color: gameMode === 'Hidden' ? '#92400e' : '#6d28d9',
+                  padding: '0.1rem 0.4rem',
+                  borderRadius: '4px',
+                }}
+              >
+                {gameMode}
+              </span>
+            )}
+          </div>
         </div>
       ) : (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        /* Guesser: GUESS THIS + Mask */
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <span
             style={{
-              fontSize: '1.45rem',
-              fontWeight: 900,
-              color: '#1e3a8a',
-              letterSpacing: '0.25em',
-              fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+              fontSize: '0.72rem',
+              fontWeight: 800,
+              color: '#475569',
+              letterSpacing: '0.1em',
+              textTransform: 'uppercase',
+              lineHeight: 1,
+              marginBottom: '2px',
             }}
           >
-            {wordMask || '_ _ _ _ _'}
+            GUESS THIS
           </span>
-          {wordLength > 0 && (
-            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b' }}>
-              ({wordLength})
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span
+              style={{
+                fontSize: '1.65rem',
+                fontWeight: 900,
+                color: '#0f172a',
+                letterSpacing: '0.22em',
+                lineHeight: 1.1,
+                fontFamily: 'monospace',
+              }}
+            >
+              {wordMask || (wordLength > 0 ? '_ '.repeat(wordLength).trim() : '???')}
             </span>
-          )}
-          {gameMode === 'Hidden' && (
-            <span style={{ background: '#fef3c7', color: '#92400e', fontSize: '0.68rem', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 700 }}>
-              Hidden
-            </span>
-          )}
-          {gameMode === 'Combination' && (
-            <span style={{ background: '#ede9fe', color: '#6d28d9', fontSize: '0.68rem', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 700 }}>
-              Combination
-            </span>
-          )}
+            {wordLength > 0 && gameMode !== 'Hidden' && (
+              <span style={{ fontSize: '0.85rem', fontWeight: 800, color: '#64748b' }}>
+                ({wordLength})
+              </span>
+            )}
+            {gameMode && gameMode !== 'Normal' && (
+              <span
+                style={{
+                  fontSize: '0.65rem',
+                  fontWeight: 800,
+                  backgroundColor: gameMode === 'Hidden' ? '#fef3c7' : '#ede9fe',
+                  color: gameMode === 'Hidden' ? '#92400e' : '#6d28d9',
+                  padding: '0.1rem 0.4rem',
+                  borderRadius: '4px',
+                }}
+              >
+                {gameMode}
+              </span>
+            )}
+          </div>
         </div>
       )}
     </div>

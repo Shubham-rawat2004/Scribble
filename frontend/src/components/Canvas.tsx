@@ -15,6 +15,7 @@ interface CanvasProps {
   };
   className?: string;
   style?: React.CSSProperties;
+  children?: React.ReactNode;
 }
 
 export const Canvas: React.FC<CanvasProps> = ({
@@ -24,6 +25,7 @@ export const Canvas: React.FC<CanvasProps> = ({
   pointerHandlers,
   className = '',
   style = {},
+  children,
 }) => {
   return (
     <div
@@ -31,11 +33,10 @@ export const Canvas: React.FC<CanvasProps> = ({
         position: 'relative',
         width: '100%',
         height: '100%',
-        minHeight: '440px',
         backgroundColor: '#ffffff',
-        borderRadius: '16px',
+        borderRadius: '6px',
         border: '3px solid #1e293b',
-        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)',
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
         overflow: 'hidden',
         display: 'flex',
         cursor: readOnly ? 'default' : tool === 'eraser' ? 'cell' : 'crosshair',
@@ -50,9 +51,10 @@ export const Canvas: React.FC<CanvasProps> = ({
           width: '100%',
           height: '100%',
           display: 'block',
-          touchAction: 'none', // Disables browser gestures so drawing is uninterrupted on touchscreens
+          touchAction: 'none',
         }}
       />
+      {children}
     </div>
   );
 };

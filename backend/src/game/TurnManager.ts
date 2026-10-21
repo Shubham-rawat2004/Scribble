@@ -47,10 +47,12 @@ export class TurnManager {
   public guessedPlayerIds: Set<string>;
   public currentRoundId: string | null;
   public turnScores: Map<string, number>;
+  public solverBasePoints: number[];
 
   private selectionTimeout: NodeJS.Timeout | null = null;
   private turnInterval: NodeJS.Timeout | null = null;
   private hintTimeouts: NodeJS.Timeout[] = [];
+  private postTurnTimeout: NodeJS.Timeout | null = null;
   public timeRemaining: number = 0;
   private onTurnEndCallback: (() => void) | null = null;
 
@@ -69,6 +71,7 @@ export class TurnManager {
     this.guessedPlayerIds = new Set();
     this.currentRoundId = null;
     this.turnScores = new Map();
+    this.solverBasePoints = [];
 
     this.resetDrawerQueue();
   }
@@ -79,7 +82,7 @@ export class TurnManager {
   public resetDrawerQueue(): void {
     this.drawerQueue = this.room
       .getPlayerList()
-      .filter((p) => !p.isSpectator && p.isConnected)
+      .filter((p) => p.isConnected)
       .map((p) => p.id);
   }
 
@@ -87,8 +90,6 @@ export class TurnManager {
    * Appends a late-joining player to the current round's drawer queue so they also draw.
    */
   public addPlayerToTurn(playerId: string): void {
-    const player = this.room.getPlayer(playerId);
-    if (player && player.isSpectator) return;
     if (!this.drawerQueue.includes(playerId) && this.currentDrawerId !== playerId) {
       this.drawerQueue.push(playerId);
       console.log(`[TurnManager] Added late-joining player ${playerId} to drawerQueue for room ${this.room.id}. (Queue: ${this.drawerQueue.length})`);
@@ -166,6 +167,7 @@ export class TurnManager {
     this.revealedIndices = [];
     this.guessedPlayerIds.clear();
     this.turnScores.clear();
+    this.solverBasePoints = [];
     this.turnPhase = 'DRAWING';
     this.onTurnEndCallback = onTurnEnd;
 
@@ -249,10 +251,10 @@ export class TurnManager {
     this.guessedPlayerIds.add(playerId);
     const guessOrder = this.guessedPlayerIds.size;
 
-    // Total eligible guessers are all currently connected non-spectator players except the active drawer
+    // Total eligible guessers are all currently connected players except the active drawer
     const eligibleGuessers = this.room
       .getPlayerList()
-      .filter((p) => p.id !== this.currentDrawerId && p.isConnected && !p.isSpectator);
+      .filter((p) => p.id !== this.currentDrawerId && p.isConnected);
 
     const isAllGuessed = eligibleGuessers.length > 0 && eligibleGuessers.every((p) => this.guessedPlayerIds.has(p.id));
 
@@ -266,16 +268,17 @@ export class TurnManager {
   /**
    * Awards points to a guesser and records it in this turn's score map.
    */
-  public awardGuesserPoints(playerId: string, points: number): number {
+  public awardGuesserPoints(playerId: string, points: number, basePoints?: number): number {
     const player = this.room.getPlayer(playerId);
-    if (!player || player.isSpectator) return 0;
+    if (!player) return 0;
     player.addScore(points);
     this.turnScores.set(playerId, points);
+    this.solverBasePoints.push(typeof basePoints === 'number' ? basePoints : points);
     return player.score;
   }
 
   /**
-   * Awards points to the drawer based on the proportion of guessers who solved the drawing.
+   * Awards points to the drawer based on how quickly and how many guessers solved the drawing.
    */
   public calculateAndAwardDrawerPoints(): { drawerId: string; points: number; totalScore: number } | null {
     if (!this.currentDrawerId) return null;
@@ -283,11 +286,10 @@ export class TurnManager {
     if (!drawer) return null;
 
     const eligibleGuessers = this.room
-      .getPlayerList()
-      .filter((p) => p.id !== this.currentDrawerId && p.isConnected);
+      .getActivePlayers()
+      .filter((p) => p.id !== this.currentDrawerId);
     const totalGuessers = Math.max(1, eligibleGuessers.length);
-    const solversCount = this.guessedPlayerIds.size;
-    const drawerPoints = ScoringEngine.calculateDrawerScore(solversCount, totalGuessers);
+    const drawerPoints = ScoringEngine.calculateDrawerScore(this.solverBasePoints, totalGuessers);
 
     drawer.addScore(drawerPoints);
     this.turnScores.set(drawer.id, drawerPoints);
@@ -306,7 +308,6 @@ export class TurnManager {
     const summary: RoundScoreSummaryItem[] = [];
 
     for (const player of this.room.getPlayerList()) {
-      if (player.isSpectator) continue;
       const isDrawer = player.id === this.currentDrawerId;
       const pointsEarned = this.turnScores.get(player.id) || 0;
       const guessedCorrectly = this.guessedPlayerIds.has(player.id);
@@ -374,6 +375,25 @@ export class TurnManager {
     }
   }
 
+  public setSelectionTimeout(timeout: NodeJS.Timeout): void {
+    if (this.selectionTimeout) clearTimeout(this.selectionTimeout);
+    this.selectionTimeout = timeout;
+  }
+
+  public setPostTurnTimeout(timeout: NodeJS.Timeout): void {
+    if (this.postTurnTimeout) clearTimeout(this.postTurnTimeout);
+    this.postTurnTimeout = timeout;
+  }
+
+  /**
+   * Removes a disconnected or departing player from the rotation and guessed sets.
+   */
+  public removePlayerFromTurn(playerId: string): void {
+    this.drawerQueue = this.drawerQueue.filter((id) => id !== playerId);
+    this.guessedPlayerIds.delete(playerId);
+    this.turnScores.delete(playerId);
+  }
+
   public clearAllTimers(): void {
     if (this.selectionTimeout) {
       clearTimeout(this.selectionTimeout);
@@ -382,6 +402,10 @@ export class TurnManager {
     if (this.turnInterval) {
       clearInterval(this.turnInterval);
       this.turnInterval = null;
+    }
+    if (this.postTurnTimeout) {
+      clearTimeout(this.postTurnTimeout);
+      this.postTurnTimeout = null;
     }
     for (const t of this.hintTimeouts) {
       clearTimeout(t);

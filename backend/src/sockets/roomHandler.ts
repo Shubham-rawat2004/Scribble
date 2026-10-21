@@ -12,7 +12,7 @@ import { RoomManager } from '../game/RoomManager.js';
 import { Room } from '../game/Room.js';
 import { Player } from '../game/Player.js';
 import { HintManager } from '../game/HintManager.js';
-import { triggerWordSelection } from './gameHandler.js';
+import { triggerWordSelection, handlePlayerLeftGameCheck } from './gameHandler.js';
 import crypto from 'crypto';
 
 // Map of active countdowns for public rooms: roomId -> { timer, secondsLeft }
@@ -157,11 +157,14 @@ function handlePlayerJoinedRoom(
   });
 
   const turnManager = roomManager.getTurnManager(room.id);
+  const isSolvedOrDrawer = Boolean(
+    turnManager && (turnManager.hasPlayerGuessed(player.id) || turnManager.currentDrawerId === player.id)
+  );
 
-  // 1. Send existing chat history to the joining player so they see previous events
+  // 1. Send existing chat history to the joining player (hiding solved-only messages if unsolved)
   socket.emit('chat_history', {
     roomId: room.id,
-    messages: room.getChatHistory(),
+    messages: room.getChatHistory(isSolvedOrDrawer),
   });
 
   // 2. Announce in room chat: "[Player] joined the room!" (Skribbl-style green feed)
@@ -169,7 +172,7 @@ function handlePlayerJoinedRoom(
     id: crypto.randomUUID(),
     senderId: 'system',
     senderName: 'System',
-    text: player.isSpectator ? `${player.name} joined as a spectator!` : `${player.name} joined the room!`,
+    text: `${player.name} joined the room!`,
     type: 'PLAYER_JOINED',
     timestamp: Date.now(),
   };
@@ -182,9 +185,12 @@ function handlePlayerJoinedRoom(
     // Add late-joining player to current round rotation
     if (turnManager) {
       turnManager.addPlayerToTurn(player.id);
+      if (isSolvedOrDrawer) {
+        socket.join(`room_${room.id}_solved`);
+      }
     }
 
-    // Hydrate existing canvas strokes for the newly joined spectator/guesser
+    // Hydrate existing canvas strokes for the newly joined guesser
     socket.emit('canvas_init', {
       roomId: room.id,
       strokes: room.getStrokeHistory(),
@@ -345,7 +351,7 @@ export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
         const avatarId = payload.avatarId || 'avatar_1';
 
         // Join room in RoomManager
-        const { room, player } = await roomManager.joinRoom(rawCode, rawName, avatarId, socket.id, Boolean(payload.isSpectator));
+        const { room, player } = await roomManager.joinRoom(rawCode, rawName, avatarId, socket.id);
         await socket.join(room.id);
 
         handlePlayerJoinedRoom(io, socket, room, player, callback);
@@ -532,6 +538,7 @@ export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
         io.to(room.id).emit('chat_message', leaveMsg);
 
         checkAndTriggerPublicCountdown(io, room);
+        await handlePlayerLeftGameCheck(io, room, targetPlayer.id);
 
         console.log(`[Socket.IO] Host "${hostPlayer.name}" kicked "${targetPlayer.name}" from room "${room.id}"`);
         if (callback) callback({ success: true });
@@ -613,6 +620,7 @@ export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
           io.to(room.id).emit('chat_message', kickMsg);
 
           checkAndTriggerPublicCountdown(io, room);
+          await handlePlayerLeftGameCheck(io, room, target.id);
           console.log(`[Socket.IO] Target "${target.name}" kicked by democratic vote (${votes}/${threshold})`);
           if (callback) callback({ success: true, votes, threshold });
         } else {
@@ -654,63 +662,62 @@ export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
   );
 
   /**
-   * Event: toggle_spectator
-   * Toggles participant status between active player and spectator.
+   * Event: leave_room
+   * Explicit leave room event triggered when a player clicks "Leave" or "Main Menu".
    */
   socket.on(
-    'toggle_spectator',
-    async (
-      data: { roomId: string },
-      callback?: (res: { success: boolean; isSpectator?: boolean; error?: string }) => void
-    ) => {
+    'leave_room',
+    async (data?: { roomId?: string }, callback?: (res: { success: boolean }) => void) => {
       try {
-        if (!data || !data.roomId) {
-          if (callback) callback({ success: false, error: 'Invalid parameters.' });
-          return;
+        const result = await roomManager.handleDisconnect(socket.id);
+        if (result.room && result.player && result.wasRemoved) {
+          socket.leave(result.room.id);
+          const remainingPlayers = result.room.getPlayerList().map((p) => p.toDTO());
+          io.to(result.room.id).emit('player_left', {
+            playerId: result.player.id,
+            players: remainingPlayers,
+            newHostId: result.newHost?.id,
+          });
+
+          // Announce player left in room chat
+          const leaveMsg = {
+            id: crypto.randomUUID(),
+            senderId: 'system',
+            senderName: 'System',
+            text: `${result.player.name} left the room!`,
+            type: 'PLAYER_LEFT',
+            timestamp: Date.now(),
+          };
+          result.room.addChatMessage(leaveMsg);
+          io.to(result.room.id).emit('chat_message', leaveMsg);
+
+          if (result.newHost) {
+            const newHostMsg = {
+              id: crypto.randomUUID(),
+              senderId: 'system',
+              senderName: 'System',
+              text: `${result.newHost.name} is now the room owner!`,
+              type: 'ROOM_OWNER',
+              timestamp: Date.now() + 1,
+            };
+            result.room.addChatMessage(newHostMsg);
+            io.to(result.room.id).emit('chat_message', newHostMsg);
+          }
+
+          checkAndTriggerPublicCountdown(io, result.room);
+          await handlePlayerLeftGameCheck(io, result.room, result.player.id);
+          console.log(
+            `[Socket.IO] Processed leave_room for ${result.player.name} in room ${result.room.id}. Remaining: ${remainingPlayers.length}`
+          );
         }
-
-        const room = roomManager.getRoom(data.roomId);
-        if (!room) {
-          if (callback) callback({ success: false, error: 'Room not found.' });
-          return;
+        if (typeof callback === 'function') {
+          callback({ success: true });
         }
-
-        const player = room.getPlayerBySocket(socket.id);
-        if (!player) {
-          if (callback) callback({ success: false, error: 'Player not recognized.' });
-          return;
-        }
-
-        if (room.status !== 'LOBBY') {
-          if (callback) callback({ success: false, error: 'Role can only be changed in the lobby.' });
-          return;
-        }
-
-        player.isSpectator = !player.isSpectator;
-
-        const allPlayers = room.getPlayerList().map((p) => p.toDTO());
-        io.to(room.id).emit('player_joined', {
-          player: player.toDTO(),
-          players: allPlayers,
-        });
-
-        const statusMsg = {
-          id: crypto.randomUUID(),
-          senderId: 'system',
-          senderName: 'System',
-          text: `${player.name} is now ${player.isSpectator ? 'a Spectator 👁️' : 'an Active Player 🎮'}!`,
-          type: 'SYSTEM_INFO',
-          timestamp: Date.now(),
-        };
-        room.addChatMessage(statusMsg);
-        io.to(room.id).emit('chat_message', statusMsg);
-
-        checkAndTriggerPublicCountdown(io, room);
-
-        if (callback) callback({ success: true, isSpectator: player.isSpectator });
       } catch (err) {
-        console.error('[Socket.IO] Error in toggle_spectator:', err);
-        if (callback) callback({ success: false, error: 'Failed to toggle spectator role.' });
+        console.error('[Socket.IO] Error handling leave_room:', err);
+        if (typeof callback === 'function') {
+          callback({ success: false });
+        }
       }
     }
   );
@@ -755,6 +762,7 @@ export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
         }
 
         checkAndTriggerPublicCountdown(io, result.room);
+        await handlePlayerLeftGameCheck(io, result.room, result.player.id);
         console.log(
           `[Socket.IO] Emitted player_left for ${result.player.name} in room ${result.room.id}. Remaining: ${remainingPlayers.length}`
         );

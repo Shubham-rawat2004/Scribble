@@ -20,7 +20,6 @@ export interface PlayerDTO {
   isHost: boolean;
   score: number;
   isConnected: boolean;
-  isSpectator?: boolean;
 }
 
 export interface DrawPoint {
@@ -66,7 +65,6 @@ export interface JoinRoomPayload {
   roomId: string;
   playerName: string;
   avatarId?: string;
-  isSpectator?: boolean;
 }
 
 export interface JoinRoomResponse {
@@ -116,4 +114,15 @@ export interface DrawUndoPayload {
 
 export interface CanvasClearPayload {
   roomId: string;
+}
+
+export interface GameOverPayload {
+  roomId: string;
+  winner: PlayerDTO | null;
+  podium: PlayerDTO[];
+  leaderboard: PlayerDTO[];
+  totalRoundsPlayed: number;
+  reason?: string;
+  message?: string;
+  winnerByDefault?: boolean;
 }

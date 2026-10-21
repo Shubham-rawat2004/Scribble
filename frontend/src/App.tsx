@@ -161,6 +161,9 @@ export const App: React.FC = () => {
   };
 
   const handleLeaveRoom = () => {
+    if (currentRoom) {
+      socket.emit('leave_room', { roomId: currentRoom.id });
+    }
     socket.disconnect();
     socket.connect();
     setCurrentRoom(null);
@@ -185,14 +188,14 @@ export const App: React.FC = () => {
   };
 
   // Direct join from Home "Play!" button
-  const handleQuickPlayOrJoin = (nickname: string, avatarId: string, roomCode?: string, isSpectator?: boolean) => {
+  const handleQuickPlayOrJoin = (nickname: string, avatarId: string, roomCode?: string) => {
     setSavedNickname(nickname);
     setSavedAvatarId(avatarId);
     const targetCode = roomCode || prefilledRoomCode;
 
     if (targetCode) {
-      addLog(`Joining room ${targetCode} as ${nickname}${isSpectator ? ' (Spectator)' : ''}...`, 'info');
-      socket.emit('join_room', { roomId: targetCode, playerName: nickname, avatarId, isSpectator: Boolean(isSpectator) }, (res: JoinRoomResponse) => {
+      addLog(`Joining room ${targetCode} as ${nickname}...`, 'info');
+      socket.emit('join_room', { roomId: targetCode, playerName: nickname, avatarId }, (res: JoinRoomResponse) => {
         if (res.success && res.room && res.player) {
           handleRoomCreatedOrJoined(res.room, res.player, res.session);
         } else {
@@ -220,11 +223,11 @@ export const App: React.FC = () => {
     setActiveView('create_room');
   };
 
-  const handleJoinRoomNavigation = (nickname: string, avatarId: string, code: string, isSpectator?: boolean) => {
+  const handleJoinRoomNavigation = (nickname: string, avatarId: string, code: string) => {
     setSavedNickname(nickname);
     setSavedAvatarId(avatarId);
     setPrefilledRoomCode(code);
-    handleQuickPlayOrJoin(nickname, avatarId, code, isSpectator);
+    handleQuickPlayOrJoin(nickname, avatarId, code);
   };
 
   return (
@@ -232,7 +235,10 @@ export const App: React.FC = () => {
       {/* Background Doodle Canvas */}
       <DoodleBackground />
 
-      <div className="container" style={{ position: 'relative', zIndex: 2 }}>
+      <div
+        className={activeView === 'active_game' || activeView === 'lobby' ? 'game-arena-wrapper' : 'container'}
+        style={{ position: 'relative', zIndex: 2 }}
+      >
         {/* VIEW: HOME SCREEN */}
         {activeView === 'home' && (
           <Home
