@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { SkribblLogo } from '../components/SkribblLogo';
 import { SkribblAvatarPicker } from '../components/SkribblAvatarPicker';
 import { SkribblAvatar, serializeAvatarConfig } from '../components/SkribblAvatar';
-import { Plus, Globe, KeyRound, ArrowRight } from 'lucide-react';
+import { Plus, Globe } from 'lucide-react';
 
 interface HomeProps {
   initialNickname?: string;
@@ -28,47 +28,7 @@ export const Home: React.FC<HomeProps> = ({
   const [nickname, setNickname] = useState<string>(initialNickname);
   const [avatarId, setAvatarId] = useState<string>(initialAvatarId);
   const [language, setLanguage] = useState<string>('English');
-  const [manualRoomCode, setManualRoomCode] = useState<string>(invitedRoomCode);
-  const [showManualJoin, setShowManualJoin] = useState<boolean>(!invitedRoomCode);
   const [error, setError] = useState<string | null>(null);
-
-  // Helper to extract clean 6-character room code from raw string or full URL
-  const extractCode = (input: string): string => {
-    const trimmed = input.trim();
-    // 1. Authentic Skribbl URL: ?ROOMCODE (e.g. ?SALNXJ or https://skribbl.io/?f1CF68YI)
-    const authenticMatch = trimmed.match(/\?([A-Za-z0-9]{6,8})(?:$|[&#])/);
-    if (authenticMatch) {
-      return authenticMatch[1].toUpperCase();
-    }
-    // 2. Named query parameter: ?join=CODE or ?room=CODE
-    const namedQueryMatch = trimmed.match(/[?&](?:join|room)=([A-Za-z0-9]{6,8})/i);
-    if (namedQueryMatch) {
-      return namedQueryMatch[1].toUpperCase();
-    }
-    // 3. Path parameter: /join/CODE
-    const pathMatch = trimmed.match(/\/join\/([A-Za-z0-9]{6,8})/i);
-    if (pathMatch) {
-      return pathMatch[1].toUpperCase();
-    }
-    // 4. Raw code: e.g. "SALNXJ"
-    const rawMatch = trimmed.match(/^[A-Za-z0-9]{6,8}$/);
-    if (rawMatch) {
-      return rawMatch[0].toUpperCase();
-    }
-    return trimmed.toUpperCase();
-  };
-
-  const handleRoomCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value;
-    setManualRoomCode(extractCode(raw));
-  };
-
-  const handleRoomCodePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
-    e.preventDefault();
-    const pastedText = e.clipboardData.getData('text');
-    const cleaned = extractCode(pastedText);
-    setManualRoomCode(cleaned);
-  };
 
   const handlePlayClick = (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,9 +39,8 @@ export const Home: React.FC<HomeProps> = ({
     }
     setError(null);
 
-    const targetCode = invitedRoomCode || manualRoomCode.trim();
-    if (targetCode) {
-      onJoinRoom(cleanName, avatarId, targetCode);
+    if (invitedRoomCode) {
+      onJoinRoom(cleanName, avatarId, invitedRoomCode);
     } else {
       onQuickPlay(cleanName, avatarId);
     }
@@ -90,22 +49,6 @@ export const Home: React.FC<HomeProps> = ({
   const handleCreatePrivateRoomClick = () => {
     const cleanName = nickname.trim() || 'Player';
     onCreateRoom(cleanName, avatarId);
-  };
-
-  const handleDirectJoinSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanName = nickname.trim();
-    if (!cleanName) {
-      setError('Please enter your nickname first!');
-      return;
-    }
-    const cleanCode = manualRoomCode.trim();
-    if (!cleanCode) {
-      setError('Please enter a 6-character room code or paste an invite link.');
-      return;
-    }
-    setError(null);
-    onJoinRoom(cleanName, avatarId, cleanCode);
   };
 
   return (
@@ -270,7 +213,7 @@ export const Home: React.FC<HomeProps> = ({
             }}
           >
             <Globe size={22} />
-            {invitedRoomCode ? 'Play!' : manualRoomCode ? 'Play!' : 'Play Online (Random Players)'}
+            {invitedRoomCode ? 'Play!' : 'Play Online (Random Players)'}
           </button>
 
           {/* Blue Create Private Room Button */}
@@ -295,70 +238,6 @@ export const Home: React.FC<HomeProps> = ({
             Create Private Room (Friends)
           </button>
         </div>
-
-        {/* Optional Manual Room Code Drawer */}
-        {!invitedRoomCode && (
-          <div style={{ marginTop: '1.25rem', borderTop: '1px solid #e2e8f0', paddingTop: '1rem' }}>
-            {!showManualJoin ? (
-              <button
-                type="button"
-                onClick={() => setShowManualJoin(true)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#2563eb',
-                  fontSize: '0.88rem',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  width: '100%',
-                  textAlign: 'center',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.4rem',
-                }}
-              >
-                <KeyRound size={15} /> Join with Room Code / Invite Link
-              </button>
-            ) : (
-              <form onSubmit={handleDirectJoinSubmit} style={{ display: 'flex', gap: '0.5rem' }}>
-                <div style={{ position: 'relative', flex: 1 }}>
-                  <input
-                    type="text"
-                    value={manualRoomCode}
-                    onChange={handleRoomCodeChange}
-                    onPaste={handleRoomCodePaste}
-                    placeholder="Enter code or paste invite URL"
-                    maxLength={100}
-                    style={{
-                      width: '100%',
-                      padding: '0.65rem 0.85rem',
-                      borderRadius: '8px',
-                      border: '1.5px solid #cbd5e1',
-                      fontSize: '0.9rem',
-                      fontWeight: 700,
-                      letterSpacing: '0.05em',
-                      textTransform: 'uppercase',
-                      outline: 'none',
-                    }}
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="btn btn-primary"
-                  style={{
-                    padding: '0.65rem 1rem',
-                    fontSize: '0.9rem',
-                    fontWeight: 700,
-                    borderRadius: '8px',
-                  }}
-                >
-                  Join <ArrowRight size={16} />
-                </button>
-              </form>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Floating Diagnostics Pill Button at Bottom */}

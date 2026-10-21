@@ -56,13 +56,6 @@ export const JoinRoom: React.FC<JoinRoomProps> = ({
     setRoomCode(extractCode(raw));
   };
 
-  const handleRoomCodePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
-    e.preventDefault();
-    const pastedText = e.clipboardData.getData('text');
-    const cleaned = extractCode(pastedText);
-    setRoomCode(cleaned);
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const cleanCode = extractCode(roomCode);
@@ -143,7 +136,7 @@ export const JoinRoom: React.FC<JoinRoomProps> = ({
       )}
 
       <form onSubmit={handleSubmit}>
-        {/* Room Code with Smart Paste */}
+        {/* Room Code */}
         <div style={{ marginBottom: '1.25rem' }}>
           <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: 700, color: '#334155', marginBottom: '0.4rem' }}>
             Room Code / Invite URL
@@ -158,9 +151,8 @@ export const JoinRoom: React.FC<JoinRoomProps> = ({
               type="text"
               value={roomCode}
               onChange={handleRoomCodeChange}
-              onPaste={handleRoomCodePaste}
-              placeholder="e.g. SALNXJ or paste link"
-              maxLength={100}
+              placeholder="Enter Room Code (e.g. SALNXJ)"
+              maxLength={10}
               required
               style={{
                 width: '100%',
@@ -175,9 +167,6 @@ export const JoinRoom: React.FC<JoinRoomProps> = ({
               }}
             />
           </div>
-          <span style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '0.25rem', display: 'block' }}>
-            💡 You can paste a full invite URL (e.g. <code>http://localhost:5173/?SALNXJ</code>) and we'll extract the code!
-          </span>
         </div>
 
         {/* Nickname */}
