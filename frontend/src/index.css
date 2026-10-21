@@ -42,6 +42,13 @@ body {
   width: 100%;
 }
 
+.game-arena-wrapper {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 0.75rem 1rem;
+  width: 100%;
+}
+
 .header {
   text-align: center;
   margin-bottom: 2.5rem;

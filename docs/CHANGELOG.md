@@ -4,6 +4,226 @@ All notable changes to the codebase, database schema, WebSocket events, and docu
 
 ---
 
+## [Phase 10] Production Hardening, System Polish & Technical Interview Defense
+**Date:** 2026-10-21  
+**Author:** Pair Programming (Developer & AI Architect)  
+**Status:** Implemented, Tested & Documented  
+
+### Summary of Actions
+Implemented production hardening, host moderation, custom word lists, public matchmaking, environment auditing, and comprehensive documentation:
+1. **Host Moderation Engine (`RoomManager.ts`, `roomHandler.ts`, `Lobby.tsx`):**
+   - Implemented `kick_player` socket handler with host authentication.
+   - Evicts kicked player from socket room and deletes record from MySQL `players`.
+   - Sends direct `kicked` event to target client and broadcasts `player_left` to remaining clients.
+2. **Custom Word Lists (`WordManager.ts`, `CreateRoom.tsx`):**
+   - Hosts can specify comma-separated custom words during room creation.
+   - Word selection algorithm prioritizes custom words before falling back to MySQL categorized catalog.
+3. **Public Room Matchmaking (`RoomManager.ts`, `roomHandler.ts`, `App.tsx`):**
+   - Implemented `quick_play` socket event. Automatically matches into available open public lobbies or generates a standard public room on demand.
+4. **Environment Hardening & Comprehensive Documentation:**
+   - Created `backend/.env.example` and `frontend/.env.example`.
+   - Built comprehensive root `README.md` with Mermaid diagrams, quickstart guides, and interview defense topics.
+   - Verified 100% pass across all 9 automated integration test suites.
+
+### Files Created:
+1. `backend/tests/moderation_and_custom_words.test.js`
+2. `backend/tests/quick_play.test.js`
+3. `docs/features/10-production-hardening-and-interview-prep.md`
+4. `docs/change-sets/10-production-hardening.patch`
+5. `backend/.env.example`
+6. `frontend/.env.example`
+7. `README.md`
+
+### Files Modified:
+1. `backend/src/types/room.ts`
+2. `backend/src/game/RoomManager.ts`
+3. `backend/src/game/WordManager.ts`
+4. `backend/src/game/TurnManager.ts`
+5. `backend/src/sockets/roomHandler.ts`
+6. `frontend/src/types/game.ts`
+7. `frontend/src/pages/Lobby.tsx`
+8. `frontend/src/pages/CreateRoom.tsx`
+9. `frontend/src/App.tsx`
+10. `docs/requirements-checklist.md`
+11. `docs/CHANGELOG.md`
+12. `docs/PROJECT_WALKTHROUGH.md`
+
+### Verification & Testing:
+- `backend/tests/moderation_and_custom_words.test.js`: Passed.
+- `backend/tests/quick_play.test.js`: Passed.
+- All 9 integration test suites passed.
+- Backend TypeScript compilation: 0 errors.
+- Frontend production build: 0 errors.
+
+---
+
+## [Phase 9] Game Over, Victory Podium & Match Statistics
+**Date:** 2026-10-21  
+**Author:** Pair Programming (Developer & AI Architect)  
+**Status:** Implemented, Tested & Documented  
+
+### Summary of Actions
+Implemented match completion lifecycle, 3-tier Olympic victory podium, return-to-lobby workflow, and MySQL session finalization:
+1. **Match End Detection (`TurnManager.ts`):**
+   - Automatically detects match completion when all players complete turns across all rounds (`totalRounds`).
+   - Sets room status to `FINISHED` and halts turn scheduling.
+2. **Server-Authoritative Victory Engine (`gameHandler.ts`):**
+   - Ranks all connected players by cumulative score descending.
+   - Designates match Winner and top 3 Podium finishers (Gold 🥇, Silver 🥈, Bronze 🥉).
+   - Emits `game_over` event with winner, podium, and complete leaderboard.
+3. **Authentic 3-Tier Olympic Podium UI (`GameOverModal.tsx`):**
+   - Staggered podium pedestals (Center Gold 155px with Crown 👑, Left Silver 110px, Right Bronze 80px).
+   - Shows modular player avatars (`SkribblAvatar.tsx`) and total points.
+   - Complete scrollable final leaderboard.
+4. **"Play Again" / Return to Lobby Flow:**
+   - Host has exclusive control to trigger `return_to_lobby`.
+   - Server resets `room.status = 'LOBBY'`, resets all player scores to 0, updates MySQL, and broadcasts `returned_to_lobby` transitioning all clients back to the lobby view together.
+5. **Relational Database Lifecycle (MySQL):**
+   - Updates `game_sessions`: `status = 'COMPLETED'`, `ended_at = NOW()`, `winner_player_id = ?`, and `total_rounds_played = ?`.
+   - Updates `rooms`: `status = 'FINISHED'` and resets to `'LOBBY'` upon return to lobby.
+   - Resets `players.total_score = 0` in MySQL upon return to lobby.
+
+### Files Created:
+1. `frontend/src/components/GameOverModal.tsx`
+2. `backend/tests/game_over.test.js`
+3. `docs/features/09-game-over-and-podium.md`
+4. `docs/change-sets/09-game-over.patch`
+
+### Files Modified:
+1. `backend/src/sockets/gameHandler.ts`
+2. `frontend/src/types/game.ts`
+3. `frontend/src/App.tsx`
+4. `frontend/src/pages/GameView.tsx`
+5. `docs/requirements-checklist.md`
+6. `docs/CHANGELOG.md`
+7. `docs/PROJECT_WALKTHROUGH.md`
+
+### Verification & Testing:
+- Multi-client automated test `backend/tests/game_over.test.js` passed:
+  - Verified progression through all 6 turns and 2 complete rounds.
+  - Verified `game_over` emission with winner, 3-tier podium, and leaderboard.
+  - Verified host `return_to_lobby` resets scores and transitions all sockets.
+  - Verified MySQL `game_sessions` marked `COMPLETED` with winner ID and end timestamp.
+  - Verified MySQL `rooms` status updated to `LOBBY`.
+- Backend TypeScript compilation: 0 errors.
+- Frontend production build: 0 errors.
+
+---
+
+## [Phase 8] Dynamic Scoring Engine, Round Scoreboard & Live Leaderboard
+**Date:** 2026-10-21  
+**Author:** Pair Programming (Developer & AI Architect)  
+**Status:** Implemented, Tested & Documented  
+
+### Summary of Actions
+Implemented dynamic speed-based guesser scoring, drawer performance proportionality, live animated leaderboard re-ranking, end-of-turn scoreboard modal, and MySQL database persistence:
+1. **Dynamic Guesser Scoring Formula (`ScoringEngine.ts`):**
+   - Implemented linear speed decay based on remaining time ratio: $\text{BasePoints} = \text{round}(100 + 400 \times \text{timeRemaining}/\text{drawTime})$.
+   - Implemented order bonus: $+50$ for 1st solver, $+25$ for 2nd, $+10$ for 3rd.
+   - Range: 100 to 550 points per round.
+2. **Drawer Performance Reward:**
+   - Proportional to solver percentage: $\text{round}(500 \times \text{solvers}/\text{totalGuessers})$.
+   - 0 points if 0 guessers solve, 500 points if all guessers solve.
+3. **Live Leaderboard & Animated Popups (`GameView.tsx`):**
+   - Real-time `score_update` broadcast when a player solves the word.
+   - Live score increment badge (`+550`) on player cards.
+   - Dynamic real-time re-ranking of the player roster in descending score order with rank medals (`🥇`, `🥈`, `🥉`, `#4`).
+4. **End-of-Turn Scoreboard Overlay (`TurnScoreboardModal.tsx`):**
+   - Displays revealed secret word, per-turn points earned, cumulative scores, and a 4-second animated countdown bar to the next turn.
+5. **Relational Database Persistence (MySQL):**
+   - Updates `players.total_score` on turn conclusion.
+   - Records audit rows into `player_round_scores` (`round_id`, `player_id`, `guessed_correctly`, `score_awarded`, `is_drawer`).
+   - Updates `game_rounds.ended_at = NOW()`.
+
+### Files Created:
+1. `backend/src/game/ScoringEngine.ts`
+2. `frontend/src/components/TurnScoreboardModal.tsx`
+3. `backend/tests/scoring_engine.test.js`
+4. `docs/features/08-scoring-and-leaderboard.md`
+5. `docs/change-sets/08-scoring-and-leaderboard.patch`
+
+### Files Modified:
+1. `backend/src/game/TurnManager.ts`
+2. `backend/src/sockets/chatHandler.ts`
+3. `backend/src/sockets/gameHandler.ts`
+4. `frontend/src/types/game.ts`
+5. `frontend/src/pages/GameView.tsx`
+6. `docs/requirements-checklist.md`
+7. `docs/CHANGELOG.md`
+8. `docs/PROJECT_WALKTHROUGH.md`
+
+### Verification & Testing:
+- Multi-client automated test `backend/tests/scoring_engine.test.js` passed:
+  - Verified instant guess (550 pts), mid guess (325 pts), slow guess (110 pts).
+  - Verified drawer score proportionality (0, 250, 500).
+  - Verified live `score_update` broadcast to all sockets.
+  - Verified turn end summary distribution (`roundScores`).
+  - Verified speed and arrival order differentiation: Bob (550 pts) > Charlie (525 pts).
+  - Verified MySQL audit: `players.total_score` and `player_round_scores` verified.
+- Backend TypeScript compilation: 0 errors.
+- Frontend production build: 0 errors.
+
+---
+
+## [Phase 7] Real-Time Chat & Guess Verification Engine
+**Date:** 2026-10-21  
+**Author:** Pair Programming (Developer & AI Architect)  
+**Status:** Implemented, Tested & Documented  
+
+### Summary of Actions
+Implemented real-time chat, server-authoritative guess verification, drawer anti-cheat protection, fuzzy string matching, and dual-mode solver chat isolation:
+1. **Zero-Trust Guess Verification (`GuessManager.ts`):**
+   - Server-side case-insensitive, whitespace-trimmed comparison between guesser inputs and the active secret word.
+   - Anti-Cheat: The raw plaintext secret word is dropped and never broadcast to remaining guessers upon a correct guess.
+   - Emits `player_guessed_correct` and a room-wide green celebration announcement (`🎉 [Player] guessed the word!`).
+2. **Fuzzy Matching / "You're close!" System:**
+   - Implemented dynamic programming Levenshtein distance algorithm with $O(\min(m, n))$ space optimization.
+   - Identifies non-matching guesses with edit distance $\le 1$ for words $\ge 4$ characters (e.g. `piza` for `pizza`).
+   - Sends an exclusive, private amber alert `close_guess` (`⚠️ You're close!`) only to the sender socket while broadcasting the guess as a normal incorrect attempt.
+3. **Active Drawer Anti-Cheat Protection:**
+   - Blocks the active drawer from typing the secret word (or a containing substring) in chat.
+   - Emits a private `drawer_cheat_warning` to the drawer socket; non-drawer spectators never see the message.
+4. **Option A Authentic Solver Chat Isolation (Dual Mode):**
+   - Once a player solves the secret word, subsequent messages are tagged as `GUESSED_CHAT` and routed exclusively to other players who have solved the word (plus the active drawer), preventing verbal spoilers.
+5. **Early Turn Termination (`TurnManager.ts`):**
+   - Tracks `guessedPlayerIds: Set<string>`.
+   - When all eligible guessers finish (`guessedPlayerIds.size >= totalGuessers`), triggers `endTurnEarly('ALL_GUESSED')` immediately without waiting for the clock.
+6. **Frontend 3-Column Arena & Interactive Chat Box (`ChatBox.tsx`, `GameView.tsx`):**
+   - Authentic Skribbl.io layout: Roster (Left) | Canvas (Center) | ChatBox (Right).
+   - Auto-scrolling chat history with color-coded message styling (`CHAT`, `SUCCESS`, `SELF_SUCCESS`, `CLOSE_HINT`, `GUESSED_CHAT`, `WARNING`).
+   - Green `✅ Guessed` badges and card highlight on the player leaderboard for solvers.
+
+### Files Created:
+1. `backend/src/game/GuessManager.ts`
+2. `backend/src/sockets/chatHandler.ts`
+3. `frontend/src/components/ChatBox.tsx`
+4. `backend/tests/chat_engine.test.js`
+5. `docs/features/07-chat-and-guess-verification.md`
+6. `docs/change-sets/07-chat-and-guess.patch`
+
+### Files Modified:
+1. `backend/src/game/TurnManager.ts`
+2. `backend/src/sockets/index.ts`
+3. `frontend/src/types/game.ts`
+4. `frontend/src/pages/GameView.tsx`
+5. `docs/requirements-checklist.md`
+6. `docs/CHANGELOG.md`
+7. `docs/PROJECT_WALKTHROUGH.md`
+
+### Verification & Testing:
+- Multi-client automated test `backend/tests/chat_engine.test.js` passed:
+  - Verified string normalization and Levenshtein distance calculations (`pizza` vs `piza` = 1, `apple` vs `aple` = 1).
+  - Verified drawer anti-cheat blocked secret word message.
+  - Verified regular wrong guess broadcast to room.
+  - Verified private "You're close!" notification for distance = 1.
+  - Verified correct guess hidden from other players and broadcast as celebration banner.
+  - Verified Option A solver chat isolation (only fellow solvers see post-guess messages).
+  - Verified early turn termination upon all guessers solving.
+- Backend TypeScript compilation: 0 errors.
+- Frontend production build: 0 errors.
+
+---
+
 ## [Phase 6] Turn-Based Game Engine, Word Selection & Progressive Hint System
 **Date:** 2026-10-20  
 **Author:** Pair Programming (Developer & AI Architect)  

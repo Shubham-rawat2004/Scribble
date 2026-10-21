@@ -19,6 +19,11 @@ export class Room {
   // Real-Time Drawing Turn & Vector History
   public currentDrawerId: string | null = null;
   public strokeHistory: DrawStrokeDTO[] = [];
+  public lastTurnStrokes: DrawStrokeDTO[] = [];
+  public lastTurnSecretWord: string = '';
+  public lastTurnDrawerName: string = '';
+  public chatHistory: { id: string; senderId: string; senderName: string; text: string; type: string; timestamp: number }[] = [];
+  public votekickMap: Map<string, Set<string>> = new Map();
 
   constructor(
     id: string,
@@ -51,6 +56,7 @@ export class Room {
   public removePlayer(playerId: string): { removed: boolean; newHost?: Player } {
     const wasHost = this.hostPlayerId === playerId;
     const removed = this.players.delete(playerId);
+    this.clearVotekick(playerId);
 
     let newHost: Player | undefined;
     if (removed && wasHost && this.players.size > 0) {
@@ -64,6 +70,37 @@ export class Room {
     }
 
     return { removed, newHost };
+  }
+
+  public voteKick(voterId: string, targetId: string): { votes: number; threshold: number; passed: boolean } {
+    if (!this.hasPlayer(voterId) || !this.hasPlayer(targetId) || voterId === targetId) {
+      return { votes: 0, threshold: 0, passed: false };
+    }
+
+    if (!this.votekickMap.has(targetId)) {
+      this.votekickMap.set(targetId, new Set());
+    }
+
+    const voters = this.votekickMap.get(targetId)!;
+    voters.add(voterId);
+
+    const totalConnected = this.getPlayerList().filter((p) => p.isConnected).length;
+    const threshold = Math.max(1, Math.ceil(totalConnected * 0.5));
+    const votes = voters.size;
+    const passed = votes >= threshold;
+
+    if (passed) {
+      this.votekickMap.delete(targetId);
+    }
+
+    return { votes, threshold, passed };
+  }
+
+  public clearVotekick(playerId: string): void {
+    this.votekickMap.delete(playerId);
+    for (const voters of this.votekickMap.values()) {
+      voters.delete(playerId);
+    }
   }
 
   public getPlayer(playerId: string): Player | undefined {
@@ -101,11 +138,16 @@ export class Room {
     return this.players.has(playerId);
   }
 
+  public getActivePlayers(): Player[] {
+    return this.getPlayerList().filter((p) => p.isConnected);
+  }
+
   public canStartGame(): { canStart: boolean; reason?: string } {
     if (this.status !== 'LOBBY') {
       return { canStart: false, reason: 'Game is already in progress or completed.' };
     }
-    if (this.players.size < 2) {
+    const activePlayers = this.getActivePlayers();
+    if (activePlayers.length < 2) {
       return { canStart: false, reason: 'At least 2 players are required to start the game.' };
     }
     return { canStart: true };
@@ -117,8 +159,25 @@ export class Room {
 
   // --- Real-Time Drawing Turn & Buffer Operations ---
   public setCurrentDrawer(playerId: string | null): void {
+    if (this.strokeHistory.length > 0) {
+      this.lastTurnStrokes = [...this.strokeHistory];
+    }
     this.currentDrawerId = playerId;
     this.strokeHistory = [];
+  }
+
+  public setLastTurnInfo(word: string, drawerName: string, strokes: DrawStrokeDTO[]): void {
+    this.lastTurnSecretWord = word;
+    this.lastTurnDrawerName = drawerName;
+    this.lastTurnStrokes = [...strokes];
+  }
+
+  public getLastTurnInfo(): { secretWord: string; drawerName: string; strokes: DrawStrokeDTO[] } {
+    return {
+      secretWord: this.lastTurnSecretWord,
+      drawerName: this.lastTurnDrawerName,
+      strokes: [...this.lastTurnStrokes],
+    };
   }
 
   public isDrawer(socketId: string): boolean {
@@ -140,6 +199,25 @@ export class Room {
 
   public undoStroke(): DrawStrokeDTO | undefined {
     return this.strokeHistory.pop();
+  }
+
+  public getStrokeHistory(): DrawStrokeDTO[] {
+    return [...this.strokeHistory];
+  }
+
+  public addChatMessage(msg: { id: string; senderId: string; senderName: string; text: string; type: string; timestamp: number }): void {
+    this.chatHistory.push(msg);
+    if (this.chatHistory.length > 50) {
+      this.chatHistory.shift();
+    }
+  }
+
+  public getChatHistory(isPlayerSolvedOrDrawer: boolean = false): { id: string; senderId: string; senderName: string; text: string; type: string; timestamp: number }[] {
+    if (isPlayerSolvedOrDrawer) {
+      return [...this.chatHistory];
+    }
+    // Exclude GUESSED_CHAT for players who have not solved the word yet
+    return this.chatHistory.filter((m) => m.type !== 'GUESSED_CHAT');
   }
 
   public clearCanvas(): void {

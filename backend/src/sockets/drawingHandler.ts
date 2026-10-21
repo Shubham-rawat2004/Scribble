@@ -50,7 +50,7 @@ export function registerDrawingHandlers(io: Server, socket: Socket) {
 
   /**
    * Event: draw_move
-   * Streams ongoing normalized stroke points to spectators.
+   * Streams ongoing normalized stroke points to other players.
    */
   socket.on('draw_move', (payload: DrawMovePayload) => {
     try {
@@ -64,7 +64,7 @@ export function registerDrawingHandlers(io: Server, socket: Socket) {
       // Append coordinates to server vector buffer
       room.appendPoints(strokeId, points);
 
-      // Stream to spectators
+      // Stream to other players in room
       socket.to(room.id).emit('draw_move', payload);
     } catch (err) {
       console.error('[Socket.IO] Error in draw_move:', (err as Error).message);
@@ -92,7 +92,7 @@ export function registerDrawingHandlers(io: Server, socket: Socket) {
 
   /**
    * Event: draw_undo
-   * Pops the last stroke from server buffer and signals spectators to re-render.
+   * Pops the last stroke from server buffer and signals other players to re-render.
    */
   socket.on('draw_undo', (payload: DrawUndoPayload, callback?: (res: { success: boolean }) => void) => {
     try {
@@ -115,7 +115,7 @@ export function registerDrawingHandlers(io: Server, socket: Socket) {
 
   /**
    * Event: canvas_clear
-   * Wipes the vector stroke buffer and resets spectator canvases to blank.
+   * Wipes the vector stroke buffer and resets other players' canvases to blank.
    */
   socket.on('canvas_clear', (payload: CanvasClearPayload, callback?: (res: { success: boolean }) => void) => {
     try {
@@ -138,7 +138,7 @@ export function registerDrawingHandlers(io: Server, socket: Socket) {
 
   /**
    * Event: request_canvas_state
-   * Hydrates late-joining or reconnecting spectators with full current drawing.
+   * Hydrates late-joining or reconnecting players with full current drawing.
    */
   socket.on('request_canvas_state', (data: { roomId: string }, callback?: (res: { strokes: any[] }) => void) => {
     try {

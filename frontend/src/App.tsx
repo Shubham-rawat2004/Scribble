@@ -140,14 +140,30 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  const handleRoomCreatedOrJoined = (room: RoomDTO, player: PlayerDTO) => {
+  const handleRoomCreatedOrJoined = (room: RoomDTO, player: PlayerDTO, session?: GameSessionDTO) => {
     setCurrentRoom(room);
     setCurrentPlayer(player);
-    setActiveView('lobby');
-    addLog(`Entered lobby for room ${room.id} as ${player.name} (${player.isHost ? 'Host' : 'Guesser'})`, 'success');
+    if (room.status === 'PLAYING') {
+      const activeSess: GameSessionDTO = session || {
+        sessionId: 'active_session',
+        roomId: room.id,
+        status: 'IN_PROGRESS',
+        currentDrawerId: room.currentDrawerId,
+        startedAt: new Date().toISOString(),
+      };
+      setActiveSession(activeSess);
+      setActiveView('active_game');
+      addLog(`Joined in-progress match in room ${room.id} as ${player.name} (Guesser)!`, 'success');
+    } else {
+      setActiveView('lobby');
+      addLog(`Entered lobby for room ${room.id} as ${player.name} (${player.isHost ? 'Host' : 'Guesser'})`, 'success');
+    }
   };
 
   const handleLeaveRoom = () => {
+    if (currentRoom) {
+      socket.emit('leave_room', { roomId: currentRoom.id });
+    }
     socket.disconnect();
     socket.connect();
     setCurrentRoom(null);
@@ -156,10 +172,19 @@ export const App: React.FC = () => {
     addLog('Left room and returned to main menu.', 'info');
   };
 
-  const handleGameStarted = (session: GameSessionDTO) => {
+  const handleGameStarted = (session: GameSessionDTO, updatedRoom?: RoomDTO) => {
+    if (updatedRoom) {
+      setCurrentRoom(updatedRoom);
+    }
     setActiveSession(session);
     setActiveView('active_game');
     addLog(`Match started! Active Drawer: ${session.currentDrawerId || 'Host'}`, 'success');
+  };
+
+  const handleReturnToLobby = (room: RoomDTO) => {
+    setCurrentRoom(room);
+    setActiveView('lobby');
+    addLog(`Match completed. Returned to room ${room.id} lobby.`, 'info');
   };
 
   // Direct join from Home "Play!" button
@@ -172,14 +197,23 @@ export const App: React.FC = () => {
       addLog(`Joining room ${targetCode} as ${nickname}...`, 'info');
       socket.emit('join_room', { roomId: targetCode, playerName: nickname, avatarId }, (res: JoinRoomResponse) => {
         if (res.success && res.room && res.player) {
-          handleRoomCreatedOrJoined(res.room, res.player);
+          handleRoomCreatedOrJoined(res.room, res.player, res.session);
         } else {
           addLog(`Failed to join room ${targetCode}: ${res.error}`, 'warn');
           alert(res.error || `Could not join room ${targetCode}. Please verify the code.`);
         }
       });
     } else {
-      setActiveView('join_room');
+      addLog(`Finding open public game for ${nickname}...`, 'info');
+      socket.emit('quick_play', { playerName: nickname, avatarId }, (res: JoinRoomResponse) => {
+        if (res.success && res.room && res.player) {
+          addLog(`Matched into public room ${res.room.id}!`, 'success');
+          handleRoomCreatedOrJoined(res.room, res.player, res.session);
+        } else {
+          addLog(`Quick play error: ${res.error}`, 'warn');
+          setActiveView('join_room');
+        }
+      });
     }
   };
 
@@ -201,7 +235,10 @@ export const App: React.FC = () => {
       {/* Background Doodle Canvas */}
       <DoodleBackground />
 
-      <div className="container" style={{ position: 'relative', zIndex: 2 }}>
+      <div
+        className={activeView === 'active_game' || activeView === 'lobby' ? 'game-arena-wrapper' : 'container'}
+        style={{ position: 'relative', zIndex: 2 }}
+      >
         {/* VIEW: HOME SCREEN */}
         {activeView === 'home' && (
           <Home
@@ -260,6 +297,7 @@ export const App: React.FC = () => {
             currentPlayer={currentPlayer}
             session={activeSession}
             onLeaveRoom={handleLeaveRoom}
+            onReturnToLobby={handleReturnToLobby}
           />
         )}
 

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { socket } from '../services/socket';
-import { JoinRoomPayload, JoinRoomResponse, RoomDTO, PlayerDTO } from '../types/game';
+import { JoinRoomPayload, JoinRoomResponse, RoomDTO, PlayerDTO, GameSessionDTO } from '../types/game';
 import { SkribblAvatarPicker } from '../components/SkribblAvatarPicker';
 import { ArrowLeft, LogIn, KeyRound } from 'lucide-react';
 
@@ -8,7 +8,7 @@ interface JoinRoomProps {
   initialRoomCode?: string;
   initialNickname?: string;
   initialAvatarId?: string;
-  onRoomJoined: (room: RoomDTO, player: PlayerDTO) => void;
+  onRoomJoined: (room: RoomDTO, player: PlayerDTO, session?: GameSessionDTO) => void;
   onBack: () => void;
 }
 
@@ -93,7 +93,7 @@ export const JoinRoom: React.FC<JoinRoomProps> = ({
     socket.emit('join_room', payload, (response: JoinRoomResponse) => {
       setLoading(false);
       if (response.success && response.room && response.player) {
-        onRoomJoined(response.room, response.player);
+        onRoomJoined(response.room, response.player, response.session);
       } else {
         setError(response.error || 'Failed to join room.');
       }

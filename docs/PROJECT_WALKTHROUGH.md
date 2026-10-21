@@ -657,3 +657,193 @@ Phase 6 delivers the turn-based gameplay engine, drawer rotation, word selection
 - Backend TypeScript compilation (`npm.cmd --prefix backend run build`): 0 errors.
 - Frontend production build (`npm.cmd --prefix frontend run build`): 0 errors.
 
+---
+
+## Phase 7: Real-Time Chat & Guess Verification Engine
+
+### 1. Conceptual Summary
+Phase 7 introduces the guessing gameplay, anti-cheat security layer, fuzzy matching, and real-time dual-mode chat routing:
+- **Unified Chat & Guessing Interface:** No mode switches needed; players type in a single chat input which is automatically parsed and classified on the server.
+- **Zero-Trust Guess Verification (`GuessManager.ts`):** 
+  - Validates guesses case-insensitively with space normalization.
+  - Anti-Cheat: The winning guess is intercepted and never broadcast to other players, preventing word leakage.
+  - Broadcasts a room-wide celebration banner (`🎉 [Player] guessed the word!`) and updates the roster with `✅ Guessed`.
+- **Fuzzy Matching / "You're close!" Notification:**
+  - Employs dynamic programming Levenshtein distance ($O(\min(m,n))$ space).
+  - Detects near misses (distance $\le 1$ on words $\ge 4$ letters, like `piza` for `pizza`).
+  - Broadcasts the incorrect attempt to the room, but routes an exclusive private amber alert (`⚠️ You're close!`) to the guesser.
+- **Drawer Anti-Cheat Protection:**
+  - Prevents the active drawer from revealing the word or substrings in chat.
+  - Sends a private warning to the drawer; guessers never see the attempt.
+- **Option A Solver Chat Isolation:**
+  - Messages from players who have already solved the word are tagged `GUESSED_CHAT` and routed exclusively to other solvers and the drawer, preventing verbal spoilers.
+- **Early Turn Termination (`TurnManager.ts`):**
+  - Concludes the turn immediately (`ALL_GUESSED`) once every eligible guesser has found the word.
+- **Authentic 3-Column Arena Layout (`GameView.tsx`, `ChatBox.tsx`):**
+  - Roster (Left) | Canvas (Center) | ChatBox (Right).
+  - Auto-scrolling messages with color-coded alerts and solver badges.
+
+### 2. Implementation Files
+- `backend/src/game/GuessManager.ts`: Text normalizer, Levenshtein distance, and 5-way message classifier.
+- `backend/src/sockets/chatHandler.ts`: Handlers for `send_chat_message`, `chat_message`, `player_guessed_correct`, `close_guess`, `drawer_cheat_warning`.
+- `backend/src/game/TurnManager.ts`: Added `guessedPlayerIds` tracking, `markPlayerGuessed`, `hasPlayerGuessed`, and `endTurnEarly`.
+- `backend/src/sockets/index.ts`: Registered chat socket handlers.
+- `frontend/src/types/game.ts`: Added `ChatMessage`, `ChatMessageType`, and `PlayerGuessedPayload` interfaces.
+- `frontend/src/components/ChatBox.tsx`: Interactive chat panel with color-coded alerts and dynamic placeholders.
+- `frontend/src/pages/GameView.tsx`: Integrated 3-column layout, chat events, and roster checkmarks.
+- `backend/tests/chat_engine.test.js`: Multi-client automated integration test.
+
+### 3. Verification & Testing
+- Automated test `backend/tests/chat_engine.test.js` verified:
+  - String normalization and Levenshtein distance calculation (`pizza` vs `piza` = 1, `apple` vs `aple` = 1).
+  - Drawer anti-cheat blocking secret word.
+  - Regular wrong guess broadcast.
+  - Private "You're close!" notification.
+  - Correct guess word concealment and celebration banner broadcast.
+  - Option A solver chat isolation.
+  - Early turn termination on all guessers solving.
+- Backend TypeScript compilation (`npm.cmd --prefix backend run build`): 0 errors.
+- Frontend production build (`npm.cmd --prefix frontend run build`): 0 errors.
+
+---
+
+## Phase 8: Dynamic Scoring Engine, Round Scoreboard & Live Leaderboard
+
+### 1. Conceptual Summary
+Phase 8 introduces the competitive scoring system, real-time leaderboard re-ranking, and database persistence:
+- **Speed-Decay Guesser Points (`ScoringEngine.ts`):**
+  - Guesser points scale continuously with remaining time:
+    $$\text{TimeRatio} = \frac{\text{timeRemaining}}{\text{drawTimeSeconds}}, \quad \text{BasePoints} = \text{round}(100 + 400 \times \text{TimeRatio})$$
+  - Order-of-arrival bonus: 1st solver $+50$, 2nd solver $+25$, 3rd solver $+10$.
+  - Points range from 100 to 550 points.
+- **Drawer Performance Rewards:**
+  - Drawer earns points proportional to solver percentage:
+    $$\text{DrawerPoints} = \text{round}\left(500 \times \frac{\text{solversCount}}{\text{totalGuessers}}\right)$$
+  - Zero points awarded if no players solve the drawing, discouraging griefing.
+- **Live Leaderboard & Animated Increments (`GameView.tsx`):**
+  - When a solver cracks the secret word, `score_update` broadcasts immediately.
+  - Left roster dynamically re-ranks players in descending order with rank medals (`🥇`, `🥈`, `🥉`, `#4`).
+  - Floating green increment badge (`+550`) highlights on the player's card.
+- **End-of-Turn Scoreboard Overlay (`TurnScoreboardModal.tsx`):**
+  - 4-second transition screen between turns showing the revealed secret word, role badges, points earned, total cumulative scores, and a countdown to the next turn.
+- **Relational Database Persistence (MySQL):**
+  - Persists player cumulative scores to `players.total_score`.
+  - Records individual turn score rows in `player_round_scores`.
+  - Stamps `game_rounds.ended_at = NOW()`.
+
+### 2. Implementation Files
+- `backend/src/game/ScoringEngine.ts`: Speed decay, order bonus, and drawer proportionality formulas.
+- `backend/src/game/TurnManager.ts`: Added `turnScores`, `awardGuesserPoints`, `calculateAndAwardDrawerPoints`, `getRoundScoreSummary`, and `persistScoresToDatabase`.
+- `backend/src/sockets/chatHandler.ts`: Integrated scoring calculations and `score_update` broadcasts.
+- `backend/src/sockets/gameHandler.ts`: Integrated drawer reward awards and score persistence on turn end.
+- `frontend/src/types/game.ts`: Added `ScoreUpdatePayload`, `RoundScoreItem`, and `TurnEndPayload`.
+- `frontend/src/components/TurnScoreboardModal.tsx`: Visual turn transition modal with score breakdown.
+- `frontend/src/pages/GameView.tsx`: Integrated dynamic re-ranking, animated popups, and turn modal.
+- `backend/tests/scoring_engine.test.js`: Multi-client automated integration test.
+
+### 3. Verification & Testing
+- Automated test `backend/tests/scoring_engine.test.js` verified:
+  - Instant guess (550 pts), mid guess (325 pts), slow guess (110 pts).
+  - Drawer score proportionality (0, 250, 500).
+  - Live `score_update` broadcast to all sockets.
+  - Turn end summary distribution (`roundScores`).
+  - Speed and arrival order differentiation: Bob (550 pts) > Charlie (525 pts).
+  - MySQL persistence in `players` and `player_round_scores` tables.
+- Backend TypeScript compilation (`npm.cmd --prefix backend run build`): 0 errors.
+- Frontend production build (`npm.cmd --prefix frontend run build`): 0 errors.
+
+---
+
+## Phase 9: Game Over, Victory Podium & Match Statistics
+
+### 1. Conceptual Summary
+Phase 9 delivers the conclusion lifecycle of a Skribbl.io match, celebrating top performers and supporting continuous replayability:
+- **Match End Detection (`TurnManager.ts`):**
+  - Server automatically counts completed rounds against `room.settings.totalRounds`.
+  - When the final drawer in the final round concludes their turn, the server triggers match conclusion (`finalizeMatch`).
+- **Server-Authoritative Winner & Podium Computation (`gameHandler.ts`):**
+  - Ranks all connected players by cumulative `score` in descending order.
+  - Extracts the overall Winner and top 3 Podium finishers (🥇 Gold, 🥈 Silver, 🥉 Bronze).
+  - Broadcasts `game_over` event with the winner, podium, complete leaderboard, and total rounds played.
+- **Victory Podium Component (`GameOverModal.tsx`):**
+  - Staggered 3-tier Olympic podium:
+    - **1st Place (Center, 155px pedestal, Gold `#fde047`, 👑 Crown, glowing champion badge)**
+    - **2nd Place (Left, 110px pedestal, Silver `#cbd5e1`)**
+    - **3rd Place (Right, 80px pedestal, Bronze `#fed7aa`)**
+  - Displays avatar cards, final points tally, and full scrollable match standings.
+- **"Play Again" / Return to Lobby Flow:**
+  - Host-exclusive control: **"Play Again (Return to Lobby)"** emits `return_to_lobby`.
+  - Non-hosts see an informational message: *"Waiting for host to start a new match..."*.
+  - Server resets `room.status = 'LOBBY'`, sets `player.score = 0` for all players, updates MySQL (`rooms.status = 'LOBBY'`, `players.total_score = 0`), and broadcasts `returned_to_lobby`.
+  - All clients seamlessly navigate back to the Lobby room view with reset scores ready for another game.
+- **Relational Database Lifecycle (MySQL):**
+  - Stamps `game_sessions`: `status = 'COMPLETED'`, `ended_at = NOW()`, `winner_player_id = ?`, and `total_rounds_played = ?`.
+  - Updates `rooms`: `status = 'FINISHED'` (or `'LOBBY'` when returning).
+  - Resets `players.total_score = 0` upon lobby return.
+
+### 2. Implementation Files
+- `backend/src/game/TurnManager.ts`: Match finish detection after all turns in the final round.
+- `backend/src/sockets/gameHandler.ts`: `finalizeMatch` handler, `game_over` broadcast, and `return_to_lobby` listener with MySQL transaction.
+- `frontend/src/types/game.ts`: Added `GameOverPayload` and `TurnEndPayload` interfaces.
+- `frontend/src/components/GameOverModal.tsx`: Authentic Olympic 3-tier victory podium modal and leaderboard.
+- `frontend/src/pages/GameView.tsx`: Integrated `GameOverModal`, `game_over` listener, and return-to-lobby trigger.
+- `frontend/src/App.tsx`: Added `handleReturnToLobby` transition back to `activeView = 'lobby'`.
+- `backend/tests/game_over.test.js`: Multi-client automated integration test.
+
+### 3. Verification & Testing
+- Automated test `backend/tests/game_over.test.js` verified:
+  - Multi-round progression (6 turns, 2 complete rounds).
+  - Accurate `game_over` broadcast with winner identification and 3-tier podium standings.
+  - Host-triggered `return_to_lobby` event delivering state reset to all clients.
+  - Complete MySQL database audit (`game_sessions.status = 'COMPLETED'`, `ended_at` timestamped, `winner_player_id` linked, `rooms.status` updated).
+- Backend TypeScript compilation: 0 errors.
+- Frontend production build: 0 errors.
+
+---
+
+## Phase 10: Production Hardening, System Polish & Technical Interview Defense
+
+### 1. Conceptual Summary
+Phase 10 hardens the system for production release, fulfills advanced bonus features, verifies complete multi-client regression, and provides comprehensive technical defense:
+- **Host Player Moderation (`RoomManager.ts`, `roomHandler.ts`, `Lobby.tsx`):**
+  - Authoritative host kick controls with instant roster synchronization.
+  - Server rejects non-host kick attempts and prevents self-kicking.
+  - Target player receives direct `kicked` event, is evicted from the room channel, and deleted from MySQL `players`.
+- **Custom Host Word Lists (`WordManager.ts`, `CreateRoom.tsx`):**
+  - Room hosts can enter custom comma-separated word lists during room setup.
+  - Turn word selection prioritizes custom words before falling back to MySQL categorized words.
+- **Public Room Matchmaking (`RoomManager.ts`, `roomHandler.ts`, `Home.tsx`, `App.tsx`):**
+  - Seamless "Play!" flow matches players into existing open public lobbies or creates standard public rooms on demand.
+- **Zero-Configuration Environment Hardening:**
+  - Audited `.env.example` in root, backend, and frontend.
+  - Verified Docker Compose MySQL 8.0 health checks.
+  - TypeScript and Vite production builds verified with 0 errors.
+- **Comprehensive Regression Verification:**
+  - Verified all 9 integration test suites covering all core gameplay, network protocols, anti-cheat filters, and scoring logic.
+
+### 2. Implementation Files
+- `backend/src/game/RoomManager.ts`: Added `findOpenPublicRoom`, `getSocketIdByPlayerId`, and `kickPlayer`.
+- `backend/src/game/WordManager.ts`: Added support for custom word list prioritization.
+- `backend/src/sockets/roomHandler.ts`: Added `quick_play` and `kick_player` handlers with validation.
+- `frontend/src/pages/Lobby.tsx`: Added host kick moderation buttons and `kicked` listener.
+- `frontend/src/pages/CreateRoom.tsx`: Added custom words textarea.
+- `frontend/src/App.tsx`: Wired `quick_play` matchmaking to home "Play!" button.
+- `backend/tests/moderation_and_custom_words.test.js`: Automated moderation and custom words test.
+- `backend/tests/quick_play.test.js`: Automated public matchmaking test.
+- `README.md`: Comprehensive root documentation, architecture diagrams, and interview defense.
+
+### 3. Verification & Testing
+- Automated test `backend/tests/moderation_and_custom_words.test.js` verified:
+  - Non-host kick prevention.
+  - Host kick execution with MySQL deletion and remaining player roster broadcast.
+  - Custom word selection by drawer.
+- Automated test `backend/tests/quick_play.test.js` verified:
+  - Public lobby generation and multi-client matchmaking.
+- All 9 test suites across the repository passed with 100% pass rate.
+- Backend TypeScript compilation: 0 errors.
+- Frontend production build: 0 errors.
+
+
+
+
+

@@ -19,8 +19,12 @@ export class HintManager {
 
   /**
    * Generates the initial mask where letters are underscores and spaces/hyphens are preserved.
+   * In 'Hidden' game mode, letter count is concealed with question marks.
    */
-  public static createInitialMask(word: string): string[] {
+  public static createInitialMask(word: string, gameMode?: string): string[] {
+    if (gameMode === 'Hidden') {
+      return ['?', '?', '?'];
+    }
     return word.split('').map((char) => {
       if (/[A-Za-z0-9]/.test(char)) {
         return '_';

@@ -1,10 +1,21 @@
 import { Room } from './Room.js';
 import { WordManager, WordOption } from './WordManager.js';
 import { HintManager } from './HintManager.js';
+import { ScoringEngine } from './ScoringEngine.js';
 import { pool } from '../db/connection.js';
 import crypto from 'crypto';
 
 export type TurnPhase = 'WORD_SELECTION' | 'DRAWING' | 'TURN_END' | 'MATCH_END';
+
+export interface RoundScoreSummaryItem {
+  playerId: string;
+  playerName: string;
+  avatarId: string;
+  role: 'DRAWER' | 'GUESSER';
+  pointsEarned: number;
+  totalScore: number;
+  guessedCorrectly: boolean;
+}
 
 export interface TurnStateDTO {
   currentRound: number;
@@ -33,11 +44,17 @@ export class TurnManager {
   public secretWord: string | null;
   public currentMask: string[];
   public revealedIndices: number[];
+  public guessedPlayerIds: Set<string>;
+  public currentRoundId: string | null;
+  public turnScores: Map<string, number>;
+  public solverBasePoints: number[];
 
   private selectionTimeout: NodeJS.Timeout | null = null;
   private turnInterval: NodeJS.Timeout | null = null;
   private hintTimeouts: NodeJS.Timeout[] = [];
+  private postTurnTimeout: NodeJS.Timeout | null = null;
   public timeRemaining: number = 0;
+  private onTurnEndCallback: (() => void) | null = null;
 
   constructor(room: Room, sessionId: string) {
     this.room = room;
@@ -51,6 +68,10 @@ export class TurnManager {
     this.secretWord = null;
     this.currentMask = [];
     this.revealedIndices = [];
+    this.guessedPlayerIds = new Set();
+    this.currentRoundId = null;
+    this.turnScores = new Map();
+    this.solverBasePoints = [];
 
     this.resetDrawerQueue();
   }
@@ -59,7 +80,20 @@ export class TurnManager {
    * Initializes or resets the queue of players who must draw in the current round.
    */
   public resetDrawerQueue(): void {
-    this.drawerQueue = this.room.getPlayerList().map((p) => p.id);
+    this.drawerQueue = this.room
+      .getPlayerList()
+      .filter((p) => p.isConnected)
+      .map((p) => p.id);
+  }
+
+  /**
+   * Appends a late-joining player to the current round's drawer queue so they also draw.
+   */
+  public addPlayerToTurn(playerId: string): void {
+    if (!this.drawerQueue.includes(playerId) && this.currentDrawerId !== playerId) {
+      this.drawerQueue.push(playerId);
+      console.log(`[TurnManager] Added late-joining player ${playerId} to drawerQueue for room ${this.room.id}. (Queue: ${this.drawerQueue.length})`);
+    }
   }
 
   /**
@@ -86,16 +120,27 @@ export class TurnManager {
     }
 
     this.currentTurn += 1;
-    this.currentDrawerId = this.drawerQueue.shift() || this.room.hostPlayerId;
+    let nextDrawerId = this.drawerQueue.shift();
+    while (nextDrawerId && !this.room.getPlayer(nextDrawerId) && this.drawerQueue.length > 0) {
+      nextDrawerId = this.drawerQueue.shift();
+    }
+    this.currentDrawerId = nextDrawerId || this.room.hostPlayerId;
     this.room.setCurrentDrawer(this.currentDrawerId);
     this.turnPhase = 'WORD_SELECTION';
     this.secretWord = null;
     this.currentMask = [];
     this.revealedIndices = [];
+    this.guessedPlayerIds.clear();
 
-    // Fetch randomized word options
+    // Fetch randomized word options (honoring custom word list if provided)
     const optionsCount = this.room.settings.wordOptionsCount || 3;
-    this.wordOptions = await WordManager.getRandomWords(optionsCount);
+    this.wordOptions = await WordManager.getRandomWords(
+      optionsCount,
+      this.room.settings.customWords,
+      this.room.settings.customWordsOnly,
+      this.room.settings.gameMode,
+      this.room.settings.language
+    );
 
     return {
       hasMoreTurns: true,
@@ -118,9 +163,13 @@ export class TurnManager {
     this.clearAllTimers();
 
     this.secretWord = chosenWord.trim().toUpperCase();
-    this.currentMask = HintManager.createInitialMask(this.secretWord);
+    this.currentMask = HintManager.createInitialMask(this.secretWord, this.room.settings.gameMode);
     this.revealedIndices = [];
+    this.guessedPlayerIds.clear();
+    this.turnScores.clear();
+    this.solverBasePoints = [];
     this.turnPhase = 'DRAWING';
+    this.onTurnEndCallback = onTurnEnd;
 
     const drawTime = this.room.settings.drawTimeSeconds || 80;
     this.timeRemaining = drawTime;
@@ -128,6 +177,7 @@ export class TurnManager {
     // Persist round record in MySQL `game_rounds`
     try {
       const roundId = crypto.randomUUID();
+      this.currentRoundId = roundId;
       await pool.execute(
         `INSERT INTO game_rounds (
           round_id, session_id, round_number, turn_number,
@@ -148,33 +198,35 @@ export class TurnManager {
       console.error('[TurnManager] Failed to persist game_rounds to MySQL:', (dbErr as Error).message);
     }
 
-    // Schedule progressive hints based on room settings (hintsAllowed)
-    const maxHints = HintManager.getMaxHintsAllowed(this.secretWord, this.room.settings.hintsAllowed);
+    // Schedule progressive hints based on room settings (hintsAllowed) - DISABLED in 'Hidden' mode
+    if (this.room.settings.gameMode !== 'Hidden') {
+      const maxHints = HintManager.getMaxHintsAllowed(this.secretWord, this.room.settings.hintsAllowed);
 
-    if (maxHints >= 1) {
-      // Hint 1 at 50% time remaining (e.g. after drawTime * 0.5 seconds)
-      const hint1DelayMs = Math.floor(drawTime * 0.5 * 1000);
-      const t1 = setTimeout(() => {
-        if (this.turnPhase === 'DRAWING' && this.secretWord) {
-          const res = HintManager.revealNextHint(this.secretWord, this.currentMask, this.revealedIndices);
-          this.currentMask = res.updatedMask;
-          onHintReveal(HintManager.formatMaskString(this.currentMask));
-        }
-      }, hint1DelayMs);
-      this.hintTimeouts.push(t1);
-    }
+      if (maxHints >= 1) {
+        // Hint 1 at 50% time remaining (e.g. after drawTime * 0.5 seconds)
+        const hint1DelayMs = Math.floor(drawTime * 0.5 * 1000);
+        const t1 = setTimeout(() => {
+          if (this.turnPhase === 'DRAWING' && this.secretWord) {
+            const res = HintManager.revealNextHint(this.secretWord, this.currentMask, this.revealedIndices);
+            this.currentMask = res.updatedMask;
+            onHintReveal(HintManager.formatMaskString(this.currentMask));
+          }
+        }, hint1DelayMs);
+        this.hintTimeouts.push(t1);
+      }
 
-    if (maxHints >= 2) {
-      // Hint 2 at 25% time remaining (e.g. after drawTime * 0.75 seconds)
-      const hint2DelayMs = Math.floor(drawTime * 0.75 * 1000);
-      const t2 = setTimeout(() => {
-        if (this.turnPhase === 'DRAWING' && this.secretWord) {
-          const res = HintManager.revealNextHint(this.secretWord, this.currentMask, this.revealedIndices);
-          this.currentMask = res.updatedMask;
-          onHintReveal(HintManager.formatMaskString(this.currentMask));
-        }
-      }, hint2DelayMs);
-      this.hintTimeouts.push(t2);
+      if (maxHints >= 2) {
+        // Hint 2 at 25% time remaining (e.g. after drawTime * 0.75 seconds)
+        const hint2DelayMs = Math.floor(drawTime * 0.75 * 1000);
+        const t2 = setTimeout(() => {
+          if (this.turnPhase === 'DRAWING' && this.secretWord) {
+            const res = HintManager.revealNextHint(this.secretWord, this.currentMask, this.revealedIndices);
+            this.currentMask = res.updatedMask;
+            onHintReveal(HintManager.formatMaskString(this.currentMask));
+          }
+        }, hint2DelayMs);
+        this.hintTimeouts.push(t2);
+      }
     }
 
     // Countdown Timer interval
@@ -195,6 +247,153 @@ export class TurnManager {
     };
   }
 
+  public markPlayerGuessed(playerId: string): { isAllGuessed: boolean; guessOrder: number } {
+    this.guessedPlayerIds.add(playerId);
+    const guessOrder = this.guessedPlayerIds.size;
+
+    // Total eligible guessers are all currently connected players except the active drawer
+    const eligibleGuessers = this.room
+      .getPlayerList()
+      .filter((p) => p.id !== this.currentDrawerId && p.isConnected);
+
+    const isAllGuessed = eligibleGuessers.length > 0 && eligibleGuessers.every((p) => this.guessedPlayerIds.has(p.id));
+
+    return { isAllGuessed, guessOrder };
+  }
+
+  public hasPlayerGuessed(playerId: string): boolean {
+    return this.guessedPlayerIds.has(playerId);
+  }
+
+  /**
+   * Awards points to a guesser and records it in this turn's score map.
+   */
+  public awardGuesserPoints(playerId: string, points: number, basePoints?: number): number {
+    const player = this.room.getPlayer(playerId);
+    if (!player) return 0;
+    player.addScore(points);
+    this.turnScores.set(playerId, points);
+    this.solverBasePoints.push(typeof basePoints === 'number' ? basePoints : points);
+    return player.score;
+  }
+
+  /**
+   * Awards points to the drawer based on how quickly and how many guessers solved the drawing.
+   */
+  public calculateAndAwardDrawerPoints(): { drawerId: string; points: number; totalScore: number } | null {
+    if (!this.currentDrawerId) return null;
+    const drawer = this.room.getPlayer(this.currentDrawerId);
+    if (!drawer) return null;
+
+    const eligibleGuessers = this.room
+      .getActivePlayers()
+      .filter((p) => p.id !== this.currentDrawerId);
+    const totalGuessers = Math.max(1, eligibleGuessers.length);
+    const drawerPoints = ScoringEngine.calculateDrawerScore(this.solverBasePoints, totalGuessers);
+
+    drawer.addScore(drawerPoints);
+    this.turnScores.set(drawer.id, drawerPoints);
+
+    return {
+      drawerId: drawer.id,
+      points: drawerPoints,
+      totalScore: drawer.score,
+    };
+  }
+
+  /**
+   * Generates a complete turn score summary for all players.
+   */
+  public getRoundScoreSummary(): RoundScoreSummaryItem[] {
+    const summary: RoundScoreSummaryItem[] = [];
+
+    for (const player of this.room.getPlayerList()) {
+      const isDrawer = player.id === this.currentDrawerId;
+      const pointsEarned = this.turnScores.get(player.id) || 0;
+      const guessedCorrectly = this.guessedPlayerIds.has(player.id);
+
+      summary.push({
+        playerId: player.id,
+        playerName: player.name,
+        avatarId: player.avatarId,
+        role: isDrawer ? 'DRAWER' : 'GUESSER',
+        pointsEarned,
+        totalScore: player.score,
+        guessedCorrectly,
+      });
+    }
+
+    // Sort summary: highest points earned first
+    summary.sort((a, b) => b.pointsEarned - a.pointsEarned || b.totalScore - a.totalScore);
+    return summary;
+  }
+
+  /**
+   * Persists round outcome and cumulative player scores to MySQL database.
+   */
+  public async persistScoresToDatabase(): Promise<void> {
+    try {
+      if (this.currentRoundId) {
+        await pool.execute(
+          'UPDATE game_rounds SET ended_at = NOW() WHERE round_id = ?',
+          [this.currentRoundId]
+        );
+      }
+
+      for (const player of this.room.getPlayerList()) {
+        await pool.execute(
+          'UPDATE players SET total_score = ? WHERE player_id = ?',
+          [player.score, player.id]
+        );
+
+        if (this.currentRoundId) {
+          const isDrawer = player.id === this.currentDrawerId;
+          const guessedCorrectly = this.guessedPlayerIds.has(player.id);
+          const scoreAwarded = this.turnScores.get(player.id) || 0;
+          const scoreId = crypto.randomUUID();
+
+          await pool.execute(
+            `INSERT INTO player_round_scores (
+              score_id, round_id, player_id, guessed_correctly, score_awarded, is_drawer
+            ) VALUES (?, ?, ?, ?, ?, ?)`,
+            [scoreId, this.currentRoundId, player.id, guessedCorrectly, scoreAwarded, isDrawer]
+          );
+        }
+      }
+      console.log(`[TurnManager] Successfully persisted round scores to MySQL for room ${this.room.id}.`);
+    } catch (err) {
+      console.error('[TurnManager] Failed to persist scores to MySQL:', (err as Error).message);
+    }
+  }
+
+  public endTurnEarly(reason: string = 'ALL_GUESSED'): void {
+    if (this.turnPhase !== 'DRAWING') return;
+    this.clearAllTimers();
+    this.turnPhase = 'TURN_END';
+    if (this.onTurnEndCallback) {
+      this.onTurnEndCallback();
+    }
+  }
+
+  public setSelectionTimeout(timeout: NodeJS.Timeout): void {
+    if (this.selectionTimeout) clearTimeout(this.selectionTimeout);
+    this.selectionTimeout = timeout;
+  }
+
+  public setPostTurnTimeout(timeout: NodeJS.Timeout): void {
+    if (this.postTurnTimeout) clearTimeout(this.postTurnTimeout);
+    this.postTurnTimeout = timeout;
+  }
+
+  /**
+   * Removes a disconnected or departing player from the rotation and guessed sets.
+   */
+  public removePlayerFromTurn(playerId: string): void {
+    this.drawerQueue = this.drawerQueue.filter((id) => id !== playerId);
+    this.guessedPlayerIds.delete(playerId);
+    this.turnScores.delete(playerId);
+  }
+
   public clearAllTimers(): void {
     if (this.selectionTimeout) {
       clearTimeout(this.selectionTimeout);
@@ -203,6 +402,10 @@ export class TurnManager {
     if (this.turnInterval) {
       clearInterval(this.turnInterval);
       this.turnInterval = null;
+    }
+    if (this.postTurnTimeout) {
+      clearTimeout(this.postTurnTimeout);
+      this.postTurnTimeout = null;
     }
     for (const t of this.hintTimeouts) {
       clearTimeout(t);

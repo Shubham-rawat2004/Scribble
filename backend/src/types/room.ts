@@ -5,6 +5,10 @@ export interface RoomSettings {
   wordOptionsCount: number; // 1 to 5
   hintsAllowed: number;     // 0 to 5
   isPrivate: boolean;
+  customWords?: string[];
+  customWordsOnly?: boolean;
+  language?: string;
+  gameMode?: string;
 }
 
 export type RoomStatus = 'LOBBY' | 'PLAYING' | 'FINISHED' | 'ABANDONED';
@@ -68,6 +72,7 @@ export interface JoinRoomResponse {
   roomId?: string;
   room?: RoomDTO;
   player?: PlayerDTO;
+  session?: GameSessionDTO;
   error?: string;
 }
 
@@ -109,4 +114,15 @@ export interface DrawUndoPayload {
 
 export interface CanvasClearPayload {
   roomId: string;
+}
+
+export interface GameOverPayload {
+  roomId: string;
+  winner: PlayerDTO | null;
+  podium: PlayerDTO[];
+  leaderboard: PlayerDTO[];
+  totalRoundsPlayed: number;
+  reason?: string;
+  message?: string;
+  winnerByDefault?: boolean;
 }

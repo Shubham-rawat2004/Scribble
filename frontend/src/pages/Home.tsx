@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { SkribblLogo } from '../components/SkribblLogo';
 import { SkribblAvatarPicker } from '../components/SkribblAvatarPicker';
 import { SkribblAvatar, serializeAvatarConfig } from '../components/SkribblAvatar';
-import { Play, Plus, Globe, Sparkles, KeyRound, ArrowRight, Palette } from 'lucide-react';
+import { Plus, Globe, Sparkles, KeyRound, ArrowRight, Palette } from 'lucide-react';
 
 interface HomeProps {
   initialNickname?: string;
@@ -282,7 +282,7 @@ export const Home: React.FC<HomeProps> = ({
             style={{
               width: '100%',
               padding: '0.95rem 1.5rem',
-              fontSize: '1.35rem',
+              fontSize: '1.25rem',
               fontWeight: 900,
               borderRadius: '12px',
               display: 'flex',
@@ -294,8 +294,8 @@ export const Home: React.FC<HomeProps> = ({
               letterSpacing: '0.04em',
             }}
           >
-            <Play size={24} fill="currentColor" />
-            {invitedRoomCode ? `Play in ${invitedRoomCode}!` : manualRoomCode ? `Join ${manualRoomCode}!` : 'Play!'}
+            <Globe size={22} />
+            {invitedRoomCode ? `Play in ${invitedRoomCode}!` : manualRoomCode ? `Join ${manualRoomCode}!` : 'Play Online (Random Players)'}
           </button>
 
           {/* Blue Create Private Room Button */}
@@ -306,7 +306,7 @@ export const Home: React.FC<HomeProps> = ({
             style={{
               width: '100%',
               padding: '0.85rem 1.25rem',
-              fontSize: '1.1rem',
+              fontSize: '1.05rem',
               fontWeight: 800,
               borderRadius: '12px',
               display: 'flex',
@@ -317,7 +317,7 @@ export const Home: React.FC<HomeProps> = ({
             }}
           >
             <Plus size={20} strokeWidth={3} />
-            Create Private Room
+            Create Private Room (Friends)
           </button>
 
           {/* Practice Drawing Canvas Button */}
