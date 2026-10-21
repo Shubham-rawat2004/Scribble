@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { SkribblLogo } from '../components/SkribblLogo';
 import { SkribblAvatarPicker } from '../components/SkribblAvatarPicker';
 import { SkribblAvatar, serializeAvatarConfig } from '../components/SkribblAvatar';
-import { Plus, Globe, Sparkles, KeyRound, ArrowRight, Palette } from 'lucide-react';
+import { Plus, Globe, Sparkles, KeyRound, ArrowRight } from 'lucide-react';
 
 interface HomeProps {
   initialNickname?: string;
@@ -11,7 +11,6 @@ interface HomeProps {
   onQuickPlay: (nickname: string, avatarId: string, roomCode?: string) => void;
   onCreateRoom: (nickname: string, avatarId: string) => void;
   onJoinRoom: (nickname: string, avatarId: string, roomCode: string) => void;
-  onOpenCanvasSandbox: () => void;
   onOpenDiagnostics: () => void;
   isBackendHealthy: boolean;
 }
@@ -23,7 +22,6 @@ export const Home: React.FC<HomeProps> = ({
   onQuickPlay,
   onCreateRoom,
   onJoinRoom,
-  onOpenCanvasSandbox,
   onOpenDiagnostics,
   isBackendHealthy,
 }) => {
@@ -318,40 +316,6 @@ export const Home: React.FC<HomeProps> = ({
           >
             <Plus size={20} strokeWidth={3} />
             Create Private Room (Friends)
-          </button>
-
-          {/* Practice Drawing Canvas Button */}
-          <button
-            type="button"
-            onClick={onOpenCanvasSandbox}
-            style={{
-              width: '100%',
-              padding: '0.75rem 1.25rem',
-              fontSize: '0.95rem',
-              fontWeight: 800,
-              borderRadius: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '0.5rem',
-              cursor: 'pointer',
-              background: '#f8fafc',
-              border: '2px solid #cbd5e1',
-              color: '#334155',
-              transition: 'all 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = '#eff6ff';
-              e.currentTarget.style.borderColor = '#3b82f6';
-              e.currentTarget.style.color = '#1d4ed8';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = '#f8fafc';
-              e.currentTarget.style.borderColor = '#cbd5e1';
-              e.currentTarget.style.color = '#334155';
-            }}
-          >
-            <Palette size={18} /> Practice Drawing Canvas (Sandbox)
           </button>
         </div>
 
