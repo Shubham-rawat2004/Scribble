@@ -1,8 +1,9 @@
 import { io, Socket } from 'socket.io-client';
 
 // Connect to backend server. In production/Render, defaults to current origin; in dev, localhost:5000
+const envUrl = (import.meta as unknown as { env?: Record<string, string> })?.env?.VITE_BACKEND_URL;
 const BACKEND_URL =
-  import.meta.env.VITE_BACKEND_URL ||
+  envUrl ||
   (typeof window !== 'undefined' &&
   window.location.hostname !== 'localhost' &&
   window.location.hostname !== '127.0.0.1'

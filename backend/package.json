@@ -18,7 +18,6 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "mysql2": "^3.12.0",
-    "skribbl-clone": "file:..",
     "socket.io": "^4.8.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
