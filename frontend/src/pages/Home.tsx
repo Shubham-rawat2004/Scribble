@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { SkribblLogo } from '../components/SkribblLogo';
 import { SkribblAvatarPicker } from '../components/SkribblAvatarPicker';
 import { SkribblAvatar, serializeAvatarConfig } from '../components/SkribblAvatar';
-import { Plus, Globe, Sparkles, KeyRound, ArrowRight } from 'lucide-react';
+import { Plus, Globe, KeyRound, ArrowRight } from 'lucide-react';
 
 interface HomeProps {
   initialNickname?: string;
@@ -157,29 +157,6 @@ export const Home: React.FC<HomeProps> = ({
           position: 'relative',
         }}
       >
-        {/* Invited Room Banner (if user came from link ?ROOMCODE) */}
-        {invitedRoomCode && (
-          <div
-            style={{
-              background: '#eff6ff',
-              border: '2px dashed #3b82f6',
-              borderRadius: '12px',
-              padding: '0.75rem 1rem',
-              marginBottom: '1.25rem',
-              textAlign: 'center',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '0.6rem',
-            }}
-          >
-            <Sparkles size={20} color="#2563eb" />
-            <div style={{ fontSize: '0.92rem', color: '#1e40af' }}>
-              You were invited to room <b style={{ letterSpacing: '0.08em', fontSize: '1.05rem', color: '#1d4ed8' }}>{invitedRoomCode}</b>!
-            </div>
-          </div>
-        )}
-
         {/* Validation Error Message */}
         {error && (
           <div
@@ -293,7 +270,7 @@ export const Home: React.FC<HomeProps> = ({
             }}
           >
             <Globe size={22} />
-            {invitedRoomCode ? `Play in ${invitedRoomCode}!` : manualRoomCode ? `Join ${manualRoomCode}!` : 'Play Online (Random Players)'}
+            {invitedRoomCode ? 'Play!' : manualRoomCode ? 'Play!' : 'Play Online (Random Players)'}
           </button>
 
           {/* Blue Create Private Room Button */}
