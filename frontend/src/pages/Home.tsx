@@ -11,8 +11,6 @@ interface HomeProps {
   onQuickPlay: (nickname: string, avatarId: string, roomCode?: string) => void;
   onCreateRoom: (nickname: string, avatarId: string) => void;
   onJoinRoom: (nickname: string, avatarId: string, roomCode: string) => void;
-  onOpenDiagnostics: () => void;
-  isBackendHealthy: boolean;
 }
 
 export const Home: React.FC<HomeProps> = ({
@@ -22,8 +20,6 @@ export const Home: React.FC<HomeProps> = ({
   onQuickPlay,
   onCreateRoom,
   onJoinRoom,
-  onOpenDiagnostics,
-  isBackendHealthy,
 }) => {
   const [nickname, setNickname] = useState<string>(initialNickname);
   const [avatarId, setAvatarId] = useState<string>(initialAvatarId);
@@ -238,43 +234,6 @@ export const Home: React.FC<HomeProps> = ({
             Create Private Room (Friends)
           </button>
         </div>
-      </div>
-
-      {/* Floating Diagnostics Pill Button at Bottom */}
-      <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
-        <button
-          type="button"
-          onClick={onOpenDiagnostics}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-            padding: '0.5rem 1rem',
-            background: 'rgba(15, 23, 42, 0.65)',
-            backdropFilter: 'blur(6px)',
-            borderRadius: '9999px',
-            color: '#e2e8f0',
-            fontSize: '0.82rem',
-            fontWeight: 600,
-            border: '1px solid rgba(255, 255, 255, 0.15)',
-            cursor: 'pointer',
-            transition: 'all 0.15s ease',
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(15, 23, 42, 0.85)')}
-          onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(15, 23, 42, 0.65)')}
-        >
-          <span
-            style={{
-              width: '8px',
-              height: '8px',
-              borderRadius: '50%',
-              background: isBackendHealthy ? '#22c55e' : '#ef4444',
-              boxShadow: isBackendHealthy ? '0 0 8px #22c55e' : '0 0 8px #ef4444',
-              display: 'inline-block',
-            }}
-          />
-          🛠️ Architecture & System Diagnostics
-        </button>
       </div>
     </div>
   );
