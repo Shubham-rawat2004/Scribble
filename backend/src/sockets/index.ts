@@ -11,7 +11,24 @@ import { registerChatHandlers } from './chatHandler.js';
 export function initializeSockets(httpServer: HTTPServer, allowedOrigin: string): SocketIOServer {
   const io = new SocketIOServer(httpServer, {
     cors: {
-      origin: allowedOrigin,
+      origin: (origin, callback) => {
+        // Allow requests with no origin (e.g. mobile apps, curl, same-origin)
+        if (!origin) return callback(null, true);
+        if (allowedOrigin === '*' || origin === allowedOrigin) return callback(null, true);
+        const origins = allowedOrigin.split(',').map((s) => s.trim());
+        if (origins.includes(origin)) return callback(null, true);
+        // Allow Vercel, Render, Railway, or local development domains automatically
+        if (
+          origin.endsWith('.vercel.app') ||
+          origin.endsWith('.onrender.com') ||
+          origin.endsWith('.railway.app') ||
+          origin.includes('localhost') ||
+          origin.includes('127.0.0.1')
+        ) {
+          return callback(null, true);
+        }
+        return callback(null, true);
+      },
       methods: ['GET', 'POST'],
       credentials: true,
     },
