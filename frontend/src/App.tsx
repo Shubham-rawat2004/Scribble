@@ -248,7 +248,6 @@ export const App: React.FC = () => {
             onQuickPlay={handleQuickPlayOrJoin}
             onCreateRoom={handleCreateRoomNavigation}
             onJoinRoom={handleJoinRoomNavigation}
-            onOpenCanvasSandbox={() => setActiveView('canvas_sandbox')}
             onOpenDiagnostics={() => setIsDiagnosticsOpen(true)}
             isBackendHealthy={healthData?.database === 'connected' && socketConnected}
           />
