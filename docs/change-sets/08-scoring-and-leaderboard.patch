@@ -1,0 +1,1490 @@
+﻿diff --git a/backend/src/game/ScoringEngine.ts b/backend/src/game/ScoringEngine.ts
+new file mode 100644
+index 0000000..1113925
+--- /dev/null
++++ b/backend/src/game/ScoringEngine.ts
+@@ -0,0 +1,68 @@
++// ScoringEngine: Dynamic Speed-Based Points & Drawer Rewards Engine
++export interface GuesserScoreResult {
++  basePoints: number;
++  orderBonus: number;
++  totalPoints: number;
++  timeRemainingRatio: number;
++}
++
++export class ScoringEngine {
++  /**
++   * Calculates points awarded to a guesser based on speed (remaining time) and order of arrival.
++   *
++   * Formula:
++   * TimeRatio = timeRemaining / totalDrawTime
++   * BasePoints = round(100 + 400 * TimeRatio)
++   * OrderBonus: 1st: +50, 2nd: +25, 3rd: +10
++   * Total = BasePoints + OrderBonus
++   *
++   * Bounds: [100, 550]
++   */
++  public static calculateGuesserScore(
++    timeRemaining: number,
++    totalDrawTime: number,
++    guessOrder: number
++  ): GuesserScoreResult {
++    const validTotalTime = Math.max(1, totalDrawTime);
++    const clampedTimeRemaining = Math.max(0, Math.min(validTotalTime, timeRemaining));
++    const timeRatio = clampedTimeRemaining / validTotalTime;
++
++    const basePoints = Math.round(100 + 400 * timeRatio);
++
++    let orderBonus = 0;
++    if (guessOrder === 1) {
++      orderBonus = 50;
++    } else if (guessOrder === 2) {
++      orderBonus = 25;
++    } else if (guessOrder === 3) {
++      orderBonus = 10;
++    }
++
++    const totalPoints = basePoints + orderBonus;
++
++    return {
++      basePoints,
++      orderBonus,
++      totalPoints,
++      timeRemainingRatio: parseFloat(timeRatio.toFixed(3)),
++    };
++  }
++
++  /**
++   * Calculates points awarded to the drawer based on the fraction of guessers who solved the drawing.
++   *
++   * Formula:
++   * If solvers == 0: 0 points
++   * If solvers > 0: round(500 * (solvers / totalGuessers))
++   *
++   * Bounds: [0, 500]
++   */
++  public static calculateDrawerScore(solversCount: number, totalGuessers: number): number {
++    if (totalGuessers <= 0 || solversCount <= 0) {
++      return 0;
++    }
++
++    const fraction = Math.min(1, solversCount / totalGuessers);
++    return Math.round(500 * fraction);
++  }
++}
+diff --git a/backend/src/game/TurnManager.ts b/backend/src/game/TurnManager.ts
+index b6784ba..94f2a64 100644
+--- a/backend/src/game/TurnManager.ts
++++ b/backend/src/game/TurnManager.ts
+@@ -1,11 +1,22 @@
+ import { Room } from './Room.js';
+ import { WordManager, WordOption } from './WordManager.js';
+ import { HintManager } from './HintManager.js';
++import { ScoringEngine } from './ScoringEngine.js';
+ import { pool } from '../db/connection.js';
+ import crypto from 'crypto';
+ 
+ export type TurnPhase = 'WORD_SELECTION' | 'DRAWING' | 'TURN_END' | 'MATCH_END';
+ 
++export interface RoundScoreSummaryItem {
++  playerId: string;
++  playerName: string;
++  avatarId: string;
++  role: 'DRAWER' | 'GUESSER';
++  pointsEarned: number;
++  totalScore: number;
++  guessedCorrectly: boolean;
++}
++
+ export interface TurnStateDTO {
+   currentRound: number;
+   totalRounds: number;
+@@ -33,11 +44,15 @@ export class TurnManager {
+   public secretWord: string | null;
+   public currentMask: string[];
+   public revealedIndices: number[];
++  public guessedPlayerIds: Set<string>;
++  public currentRoundId: string | null;
++  public turnScores: Map<string, number>;
+ 
+   private selectionTimeout: NodeJS.Timeout | null = null;
+   private turnInterval: NodeJS.Timeout | null = null;
+   private hintTimeouts: NodeJS.Timeout[] = [];
+   public timeRemaining: number = 0;
++  private onTurnEndCallback: (() => void) | null = null;
+ 
+   constructor(room: Room, sessionId: string) {
+     this.room = room;
+@@ -51,6 +66,9 @@ export class TurnManager {
+     this.secretWord = null;
+     this.currentMask = [];
+     this.revealedIndices = [];
++    this.guessedPlayerIds = new Set();
++    this.currentRoundId = null;
++    this.turnScores = new Map();
+ 
+     this.resetDrawerQueue();
+   }
+@@ -92,6 +110,7 @@ export class TurnManager {
+     this.secretWord = null;
+     this.currentMask = [];
+     this.revealedIndices = [];
++    this.guessedPlayerIds.clear();
+ 
+     // Fetch randomized word options
+     const optionsCount = this.room.settings.wordOptionsCount || 3;
+@@ -120,7 +139,10 @@ export class TurnManager {
+     this.secretWord = chosenWord.trim().toUpperCase();
+     this.currentMask = HintManager.createInitialMask(this.secretWord);
+     this.revealedIndices = [];
++    this.guessedPlayerIds.clear();
++    this.turnScores.clear();
+     this.turnPhase = 'DRAWING';
++    this.onTurnEndCallback = onTurnEnd;
+ 
+     const drawTime = this.room.settings.drawTimeSeconds || 80;
+     this.timeRemaining = drawTime;
+@@ -128,6 +150,7 @@ export class TurnManager {
+     // Persist round record in MySQL `game_rounds`
+     try {
+       const roundId = crypto.randomUUID();
++      this.currentRoundId = roundId;
+       await pool.execute(
+         `INSERT INTO game_rounds (
+           round_id, session_id, round_number, turn_number,
+@@ -195,6 +218,125 @@ export class TurnManager {
+     };
+   }
+ 
++  public markPlayerGuessed(playerId: string): { isAllGuessed: boolean; guessOrder: number } {
++    this.guessedPlayerIds.add(playerId);
++    const guessOrder = this.guessedPlayerIds.size;
++    const totalGuessers = Math.max(1, this.room.players.size - 1);
++    const isAllGuessed = this.guessedPlayerIds.size >= totalGuessers;
++    return { isAllGuessed, guessOrder };
++  }
++
++  public hasPlayerGuessed(playerId: string): boolean {
++    return this.guessedPlayerIds.has(playerId);
++  }
++
++  /**
++   * Awards points to a guesser and records it in this turn's score map.
++   */
++  public awardGuesserPoints(playerId: string, points: number): number {
++    const player = this.room.getPlayer(playerId);
++    if (!player) return 0;
++    player.addScore(points);
++    this.turnScores.set(playerId, points);
++    return player.score;
++  }
++
++  /**
++   * Awards points to the drawer based on the proportion of guessers who solved the drawing.
++   */
++  public calculateAndAwardDrawerPoints(): { drawerId: string; points: number; totalScore: number } | null {
++    if (!this.currentDrawerId) return null;
++    const drawer = this.room.getPlayer(this.currentDrawerId);
++    if (!drawer) return null;
++
++    const totalGuessers = Math.max(1, this.room.players.size - 1);
++    const solversCount = this.guessedPlayerIds.size;
++    const drawerPoints = ScoringEngine.calculateDrawerScore(solversCount, totalGuessers);
++
++    drawer.addScore(drawerPoints);
++    this.turnScores.set(drawer.id, drawerPoints);
++
++    return {
++      drawerId: drawer.id,
++      points: drawerPoints,
++      totalScore: drawer.score,
++    };
++  }
++
++  /**
++   * Generates a complete turn score summary for all players.
++   */
++  public getRoundScoreSummary(): RoundScoreSummaryItem[] {
++    const summary: RoundScoreSummaryItem[] = [];
++
++    for (const player of this.room.getPlayerList()) {
++      const isDrawer = player.id === this.currentDrawerId;
++      const pointsEarned = this.turnScores.get(player.id) || 0;
++      const guessedCorrectly = this.guessedPlayerIds.has(player.id);
++
++      summary.push({
++        playerId: player.id,
++        playerName: player.name,
++        avatarId: player.avatarId,
++        role: isDrawer ? 'DRAWER' : 'GUESSER',
++        pointsEarned,
++        totalScore: player.score,
++        guessedCorrectly,
++      });
++    }
++
++    // Sort summary: highest points earned first
++    summary.sort((a, b) => b.pointsEarned - a.pointsEarned || b.totalScore - a.totalScore);
++    return summary;
++  }
++
++  /**
++   * Persists round outcome and cumulative player scores to MySQL database.
++   */
++  public async persistScoresToDatabase(): Promise<void> {
++    try {
++      if (this.currentRoundId) {
++        await pool.execute(
++          'UPDATE game_rounds SET ended_at = NOW() WHERE round_id = ?',
++          [this.currentRoundId]
++        );
++      }
++
++      for (const player of this.room.getPlayerList()) {
++        await pool.execute(
++          'UPDATE players SET total_score = ? WHERE player_id = ?',
++          [player.score, player.id]
++        );
++
++        if (this.currentRoundId) {
++          const isDrawer = player.id === this.currentDrawerId;
++          const guessedCorrectly = this.guessedPlayerIds.has(player.id);
++          const scoreAwarded = this.turnScores.get(player.id) || 0;
++          const scoreId = crypto.randomUUID();
++
++          await pool.execute(
++            `INSERT INTO player_round_scores (
++              score_id, round_id, player_id, guessed_correctly, score_awarded, is_drawer
++            ) VALUES (?, ?, ?, ?, ?, ?)`,
++            [scoreId, this.currentRoundId, player.id, guessedCorrectly, scoreAwarded, isDrawer]
++          );
++        }
++      }
++      console.log(`[TurnManager] Successfully persisted round scores to MySQL for room ${this.room.id}.`);
++    } catch (err) {
++      console.error('[TurnManager] Failed to persist scores to MySQL:', (err as Error).message);
++    }
++  }
++
++  public endTurnEarly(reason: string = 'ALL_GUESSED'): void {
++    if (this.turnPhase !== 'DRAWING') return;
++    this.clearAllTimers();
++    this.turnPhase = 'TURN_END';
++    if (this.onTurnEndCallback) {
++      this.onTurnEndCallback();
++    }
++  }
++
+   public clearAllTimers(): void {
+     if (this.selectionTimeout) {
+       clearTimeout(this.selectionTimeout);
+diff --git a/backend/src/sockets/chatHandler.ts b/backend/src/sockets/chatHandler.ts
+new file mode 100644
+index 0000000..1b3ba0f
+--- /dev/null
++++ b/backend/src/sockets/chatHandler.ts
+@@ -0,0 +1,230 @@
++import { Server as SocketIOServer, Socket } from 'socket.io';
++import { RoomManager } from '../game/RoomManager.js';
++import { GuessManager } from '../game/GuessManager.js';
++import { ScoringEngine } from '../game/ScoringEngine.js';
++import crypto from 'crypto';
++
++export type ChatMessageType =
++  | 'CHAT'
++  | 'SYSTEM'
++  | 'SUCCESS'
++  | 'SELF_SUCCESS'
++  | 'CLOSE_HINT'
++  | 'GUESSED_CHAT'
++  | 'WARNING';
++
++export interface ChatMessageDTO {
++  id: string;
++  senderId: string;
++  senderName: string;
++  text: string;
++  type: ChatMessageType;
++  timestamp: number;
++}
++
++/**
++ * Registers real-time chat, guess verification, anti-cheat, and fuzzy matching handlers.
++ */
++export function registerChatHandlers(io: SocketIOServer, socket: Socket) {
++  const roomManager = RoomManager.getInstance();
++
++  socket.on(
++    'send_chat_message',
++    (data: { roomId: string; text: string }, callback?: (res: { success: boolean; error?: string }) => void) => {
++      if (!data || !data.roomId || !data.text || typeof data.text !== 'string') {
++        if (callback) callback({ success: false, error: 'Invalid message payload' });
++        return;
++      }
++
++      const text = data.text.trim();
++      if (text.length === 0 || text.length > 150) {
++        if (callback) callback({ success: false, error: 'Message must be between 1 and 150 characters' });
++        return;
++      }
++
++      const room = roomManager.getRoom(data.roomId);
++      if (!room) {
++        if (callback) callback({ success: false, error: 'Room not found' });
++        return;
++      }
++
++      const player = room.getPlayerBySocket(socket.id);
++      if (!player) {
++        if (callback) callback({ success: false, error: 'Player not recognized in room' });
++        return;
++      }
++
++      const turnManager = roomManager.getTurnManager(room.id);
++      const isDrawer = room.currentDrawerId === player.id;
++      const hasAlreadyGuessed = turnManager ? turnManager.hasPlayerGuessed(player.id) : false;
++      const secretWord =
++        turnManager && turnManager.turnPhase === 'DRAWING' ? turnManager.secretWord : null;
++
++      // Evaluate message against game rules
++      const evalResult = GuessManager.evaluateMessage(
++        text,
++        secretWord,
++        isDrawer,
++        hasAlreadyGuessed
++      );
++
++      const msgId = crypto.randomUUID();
++      const now = Date.now();
++
++      switch (evalResult.classification) {
++        case 'DRAWER_CHEAT': {
++          // Drawer attempted to type the secret word in chat
++          socket.emit('drawer_cheat_warning', {
++            warning: evalResult.warning || 'You cannot type the secret word!',
++          });
++          socket.emit('chat_message', {
++            id: msgId,
++            senderId: 'system',
++            senderName: 'System',
++            text: `⚠️ ${evalResult.warning || 'You cannot type the secret word!'}`,
++            type: 'WARNING',
++            timestamp: now,
++          });
++          if (callback) callback({ success: false, error: evalResult.warning });
++          return;
++        }
++
++        case 'CORRECT_GUESS': {
++          // Guesser solved the secret word!
++          if (!turnManager) return;
++
++          const { isAllGuessed, guessOrder } = turnManager.markPlayerGuessed(player.id);
++
++          // Calculate score based on remaining time and arrival order
++          const drawTime = room.settings.drawTimeSeconds || 80;
++          const scoreResult = ScoringEngine.calculateGuesserScore(
++            turnManager.timeRemaining,
++            drawTime,
++            guessOrder
++          );
++          const newTotalScore = turnManager.awardGuesserPoints(player.id, scoreResult.totalPoints);
++
++          // 1. Send success event to room
++          io.to(room.id).emit('player_guessed_correct', {
++            roomId: room.id,
++            playerId: player.id,
++            playerName: player.name,
++            guessOrder,
++            pointsEarned: scoreResult.totalPoints,
++            newScore: newTotalScore,
++          });
++
++          // 2. Broadcast live score update for real-time leaderboard
++          io.to(room.id).emit('score_update', {
++            roomId: room.id,
++            playerId: player.id,
++            playerName: player.name,
++            pointsEarned: scoreResult.totalPoints,
++            newScore: newTotalScore,
++          });
++
++          // 3. Broadcast green celebration banner to room (hiding exact word)
++          io.to(room.id).emit('chat_message', {
++            id: msgId,
++            senderId: 'system',
++            senderName: 'System',
++            text: `${player.name} guessed the word! (+${scoreResult.totalPoints} pts)`,
++            type: 'SUCCESS',
++            timestamp: now,
++          });
++
++          // 4. Send private celebration to the solver
++          socket.emit('chat_message', {
++            id: crypto.randomUUID(),
++            senderId: 'system',
++            senderName: 'System',
++            text: `🎉 You guessed the word! (+${scoreResult.totalPoints} pts)`,
++            type: 'SELF_SUCCESS',
++            timestamp: now,
++          });
++
++          if (callback) callback({ success: true });
++
++          // 5. Early turn termination if all eligible guessers have solved
++          if (isAllGuessed) {
++            console.log(`[TurnManager] All players in room ${room.id} have guessed the word! Ending turn early.`);
++            turnManager.endTurnEarly('ALL_GUESSED');
++          }
++          return;
++        }
++
++        case 'CLOSE_GUESS': {
++          // Broadcast normal wrong guess to the room
++          io.to(room.id).emit('chat_message', {
++            id: msgId,
++            senderId: player.id,
++            senderName: player.name,
++            text,
++            type: 'CHAT',
++            timestamp: now,
++          });
++
++          // Send private "You're close!" alert only to this player
++          socket.emit('close_guess', { text: "You're close!" });
++          socket.emit('chat_message', {
++            id: crypto.randomUUID(),
++            senderId: 'system',
++            senderName: 'System',
++            text: `⚠️ You're close!`,
++            type: 'CLOSE_HINT',
++            timestamp: now,
++          });
++
++          if (callback) callback({ success: true });
++          return;
++        }
++
++        case 'ALREADY_GUESSED': {
++          // Option A: Message is broadcast exclusively to players who have already guessed + drawer
++          const chatMsg: ChatMessageDTO = {
++            id: msgId,
++            senderId: player.id,
++            senderName: player.name,
++            text,
++            type: 'GUESSED_CHAT',
++            timestamp: now,
++          };
++
++          if (turnManager) {
++            // Emit to each guessed player's socket
++            for (const guessedId of turnManager.guessedPlayerIds) {
++              const p = room.getPlayer(guessedId);
++              if (p) io.to(p.socketId).emit('chat_message', chatMsg);
++            }
++            // Also emit to the active drawer
++            if (turnManager.currentDrawerId) {
++              const drawer = room.getPlayer(turnManager.currentDrawerId);
++              if (drawer) io.to(drawer.socketId).emit('chat_message', chatMsg);
++            }
++          } else {
++            socket.emit('chat_message', chatMsg);
++          }
++
++          if (callback) callback({ success: true });
++          return;
++        }
++
++        case 'REGULAR_CHAT':
++        default: {
++          // Standard chat / wrong guess broadcast to room
++          io.to(room.id).emit('chat_message', {
++            id: msgId,
++            senderId: player.id,
++            senderName: player.name,
++            text,
++            type: 'CHAT',
++            timestamp: now,
++          });
++
++          if (callback) callback({ success: true });
++          return;
++        }
++      }
++    }
++  );
++}
+diff --git a/backend/src/sockets/gameHandler.ts b/backend/src/sockets/gameHandler.ts
+index 786e933..8c2eb27 100644
+--- a/backend/src/sockets/gameHandler.ts
++++ b/backend/src/sockets/gameHandler.ts
+@@ -107,18 +107,29 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket) {
+           });
+         },
+         // On Turn End Callback
+-        () => {
+-          console.log(`[Game] Room ${roomId}: Turn ended (Time expired)`);
++        async () => {
++          console.log(`[Game] Room ${roomId}: Turn ended`);
++
++          // 1. Calculate and award drawer points based on solver count
++          turnManager.calculateAndAwardDrawerPoints();
++
++          // 2. Build round score summary and persist to MySQL
++          const roundScores = turnManager.getRoundScoreSummary();
++          await turnManager.persistScoresToDatabase();
++
++          // 3. Emit turn_end with full score summary and updated player roster
+           io.to(room.id).emit('turn_end', {
+             roomId: room.id,
+             secretWord,
+-            reason: 'TIME_UP',
++            reason: turnManager.guessedPlayerIds.size >= Math.max(1, room.players.size - 1) ? 'ALL_GUESSED' : 'TIME_UP',
++            scores: room.getPlayerList().map((p) => p.toDTO()),
++            roundScores,
+           });
+ 
+-          // Wait 3.5 seconds to show turn results, then advance to next drawer
++          // Wait 4 seconds for players to review turn summary scoreboard, then advance
+           setTimeout(() => {
+             triggerWordSelection(roomId);
+-          }, 3500);
++          }, 4000);
+         }
+       );
+ 
+diff --git a/backend/tests/scoring_engine.test.js b/backend/tests/scoring_engine.test.js
+new file mode 100644
+index 0000000..8d64a05
+--- /dev/null
++++ b/backend/tests/scoring_engine.test.js
+@@ -0,0 +1,194 @@
++// Automated Multi-Client Integration Test: Scoring Engine, Round Scoreboard & MySQL Persistence
++const { io } = require('../../frontend/node_modules/socket.io-client');
++const assert = require('assert');
++const { ScoringEngine } = require('../dist/game/ScoringEngine.js');
++const mysql = require('../node_modules/mysql2/promise');
++
++const SOCKET_URL = 'http://localhost:5000';
++
++console.log('=== Phase 8 Dynamic Scoring Engine & Live Leaderboard Test Suite ===\n');
++
++// --- 1. Unit Tests for ScoringEngine ---
++console.log('--- Test 1: Pure Scoring Formulas (Speed Decay, Order Bonus & Drawer Reward) ---');
++
++// Speed decay
++const maxFastGuess = ScoringEngine.calculateGuesserScore(80, 80, 1);
++assert.strictEqual(maxFastGuess.basePoints, 500, 'Max base points at 100% time should be 500');
++assert.strictEqual(maxFastGuess.orderBonus, 50, '1st place bonus should be 50');
++assert.strictEqual(maxFastGuess.totalPoints, 550, 'Max total points should be 550');
++console.log('✅ Instant guess (80s/80s, 1st place):', maxFastGuess);
++
++const midGuess = ScoringEngine.calculateGuesserScore(40, 80, 2);
++assert.strictEqual(midGuess.basePoints, 300, 'Base points at 50% time should be 300');
++assert.strictEqual(midGuess.orderBonus, 25, '2nd place bonus should be 25');
++assert.strictEqual(midGuess.totalPoints, 325, 'Mid guess total points should be 325');
++console.log('✅ Mid guess (40s/80s, 2nd place):', midGuess);
++
++const slowGuess = ScoringEngine.calculateGuesserScore(0, 80, 3);
++assert.strictEqual(slowGuess.basePoints, 100, 'Min base points at 0% time should be 100');
++assert.strictEqual(slowGuess.orderBonus, 10, '3rd place bonus should be 10');
++assert.strictEqual(slowGuess.totalPoints, 110, 'Slow guess total points should be 110');
++console.log('✅ Slow guess (0s/80s, 3rd place):', slowGuess);
++
++// Drawer rewards
++assert.strictEqual(ScoringEngine.calculateDrawerScore(0, 3), 0, '0 solvers must yield 0 drawer points');
++assert.strictEqual(ScoringEngine.calculateDrawerScore(1, 2), 250, '1/2 solvers must yield 250 drawer points');
++assert.strictEqual(ScoringEngine.calculateDrawerScore(2, 2), 500, '2/2 solvers must yield 500 drawer points');
++console.log('✅ Drawer points formula verified (0/3 = 0, 1/2 = 250, 2/2 = 500)');
++
++// --- 2. Multi-Client Socket Real-Time Flow & Leaderboard Sync ---
++console.log('\n--- Test 2: Multi-Client Real-Time Scoring Flow & MySQL Persistence ---');
++const aliceSocket = io(SOCKET_URL, { reconnection: false });
++let bobSocket = null;
++let charlieSocket = null;
++
++let roomId = null;
++let alicePlayerId = null;
++let bobPlayerId = null;
++let charliePlayerId = null;
++
++let bobPointsEarned = 0;
++let charliePointsEarned = 0;
++
++aliceSocket.on('connect', () => {
++  console.log('Alice (Host/Drawer) connected:', aliceSocket.id);
++
++  aliceSocket.emit('create_room', {
++    hostName: 'AliceDrawer',
++    avatarId: 'skribbl_0_0_0',
++    settings: { maxPlayers: 4, totalRounds: 1, drawTimeSeconds: 6, wordOptionsCount: 3, hintsAllowed: 2 },
++  }, (createRes) => {
++    assert.strictEqual(createRes.success, true);
++    roomId = createRes.room.id;
++    alicePlayerId = createRes.player.id;
++    console.log(`✅ Step 1: Alice created room ${roomId}`);
++
++    bobSocket = io(SOCKET_URL, { reconnection: false });
++    bobSocket.on('connect', () => {
++      console.log('Bob (Guesser 1) connected:', bobSocket.id);
++
++      bobSocket.emit('join_room', {
++        roomId,
++        playerName: 'BobGuesser',
++        avatarId: 'skribbl_1_1_1',
++      }, (joinBobRes) => {
++        assert.strictEqual(joinBobRes.success, true);
++        bobPlayerId = joinBobRes.player.id;
++        console.log(`✅ Step 2: Bob joined room ${roomId}`);
++
++        charlieSocket = io(SOCKET_URL, { reconnection: false });
++        charlieSocket.on('connect', () => {
++          console.log('Charlie (Guesser 2) connected:', charlieSocket.id);
++
++          charlieSocket.emit('join_room', {
++            roomId,
++            playerName: 'CharlieGuesser',
++            avatarId: 'skribbl_2_2_2',
++          }, (joinCharlieRes) => {
++            assert.strictEqual(joinCharlieRes.success, true);
++            charliePlayerId = joinCharlieRes.player.id;
++            console.log(`✅ Step 3: Charlie joined room ${roomId}`);
++
++            setupGameFlow();
++            aliceSocket.emit('start_game', { roomId });
++          });
++        });
++      });
++    });
++  });
++});
++
++function setupGameFlow() {
++  aliceSocket.on('word_selection_start', (data) => {
++    console.log('✅ Step 4: Alice received word options. Selecting "pizza"...');
++    aliceSocket.emit('select_word', { roomId, word: 'pizza' });
++  });
++
++  bobSocket.on('turn_start', (data) => {
++    console.log('✅ Step 5: Turn started! Beginning guess timing tests...');
++
++    // Setup live score_update listeners
++    let bobScoreUpdateReceived = false;
++    let charlieScoreUpdateReceived = false;
++
++    aliceSocket.on('score_update', (scoreData) => {
++      console.log(`✅ Score Update broadcast received by Alice: Player ${scoreData.playerId} earned +${scoreData.pointsEarned} pts (Total: ${scoreData.newScore})`);
++      if (scoreData.playerId === bobPlayerId) {
++        bobScoreUpdateReceived = true;
++        bobPointsEarned = scoreData.pointsEarned;
++      }
++      if (scoreData.playerId === charliePlayerId) {
++        charlieScoreUpdateReceived = true;
++        charliePointsEarned = scoreData.pointsEarned;
++      }
++    });
++
++    // Step A: Bob guesses immediately
++    setTimeout(() => {
++      console.log('\n--- Action A: Bob guesses "pizza" immediately (1st place) ---');
++      bobSocket.emit('send_chat_message', { roomId, text: 'pizza' });
++    }, 200);
++
++    // Step B: Charlie guesses shortly after
++    setTimeout(() => {
++      console.log('\n--- Action B: Charlie guesses "pizza" later (2nd place) ---');
++      charlieSocket.emit('send_chat_message', { roomId, text: 'pizza' });
++    }, 800);
++
++    // Step C: Listen for turn_end
++    aliceSocket.on('turn_end', async (endData) => {
++      console.log('\n--- Action C: Turn ended and score summary received ---');
++      assert.strictEqual(endData.secretWord, 'PIZZA');
++      assert.ok(endData.roundScores && endData.roundScores.length === 3, 'Must include roundScores for all 3 players');
++      console.log('✅ Round score summary items received:', endData.roundScores.map(r => `${r.playerName} (${r.role}): +${r.pointsEarned} pts (Total: ${r.totalScore})`));
++
++      // Verify Bob got more points than Charlie (speed + order bonus)
++      assert.ok(bobPointsEarned > charliePointsEarned, `Bob (${bobPointsEarned}) must earn more points than Charlie (${charliePointsEarned})`);
++      console.log(`✅ Speed & order bonus verified: Bob (${bobPointsEarned} pts) > Charlie (${charliePointsEarned} pts)`);
++
++      // Verify Drawer Alice got 500 drawer points because 2/2 solved
++      const aliceSummary = endData.roundScores.find(r => r.playerId === alicePlayerId);
++      assert.ok(aliceSummary);
++      assert.strictEqual(aliceSummary.pointsEarned, 500, 'Drawer Alice must receive 500 points (2/2 solvers)');
++      console.log('✅ Drawer points verified: Alice received 500 drawer points!');
++
++      // Step D: Verify MySQL database persistence
++      console.log('\n--- Action D: Verifying MySQL database persistence ---');
++      try {
++        const dbConn = await mysql.createConnection({
++          host: '127.0.0.1',
++          port: 3307,
++          user: 'skribbl_user',
++          password: 'skribbl_password',
++          database: 'skribbl_db',
++        });
++
++        const [playerRows] = await dbConn.execute(
++          'SELECT player_name, total_score FROM players WHERE room_id = ? ORDER BY total_score DESC',
++          [roomId]
++        );
++        console.log('✅ MySQL players table cumulative scores:', playerRows);
++        assert.strictEqual(playerRows.length, 3);
++        assert.ok(playerRows.every(p => p.total_score > 0), 'All players must have positive cumulative scores');
++
++        const [scoreRows] = await dbConn.execute(
++          'SELECT player_id, score_awarded, is_drawer FROM player_round_scores'
++        );
++        console.log(`✅ MySQL player_round_scores table contains ${scoreRows.length} recorded entries.`);
++        assert.ok(scoreRows.length >= 3, 'Must have at least 3 entries in player_round_scores');
++
++        await dbConn.end();
++        console.log('✅ MySQL database audit completely verified!');
++
++        console.log('\n🎉 ALL PHASE 8 DYNAMIC SCORING & LEADERBOARD TESTS PASSED!');
++        aliceSocket.disconnect();
++        bobSocket.disconnect();
++        charlieSocket.disconnect();
++        process.exit(0);
++      } catch (dbErr) {
++        console.error('MySQL verification error:', dbErr);
++        process.exit(1);
++      }
++    });
++  });
++}
+diff --git a/docs/features/08-scoring-and-leaderboard.md b/docs/features/08-scoring-and-leaderboard.md
+new file mode 100644
+index 0000000..f25c582
+--- /dev/null
++++ b/docs/features/08-scoring-and-leaderboard.md
+@@ -0,0 +1,130 @@
++# Feature 08: Dynamic Scoring Engine, Round Scoreboard & Live Leaderboard
++
++This document details the complete design, mathematical formulas, network protocols, MySQL persistence, frontend components, and interview defense for Phase 8: **Dynamic Scoring Engine, Round Scoreboard & Live Leaderboard**.
++
++---
++
++## 1. Feature Overview
++Phase 8 transforms the guessing and drawing mechanisms into a competitive multiplayer game:
++1. **Dynamic Guesser Scoring Engine (`ScoringEngine.ts`):**
++   - Faster solvers earn significantly more points.
++   - Base points scale linearly with remaining round time from 100 to 500 points:
++     $$\text{TimeRatio} = \frac{\text{timeRemaining}}{\text{drawTimeSeconds}}, \quad \text{BasePoints} = \text{round}(100 + 400 \times \text{TimeRatio})$$
++   - Order bonus rewards fast solvers: 1st solver $+50$, 2nd solver $+25$, 3rd solver $+10$.
++   - Total guesser score ranges from 100 to 550 points per round.
++2. **Drawer Performance Reward:**
++   - Drawer earns points proportional to how many players solved their drawing:
++     $$\text{DrawerPoints} = \text{round}\left(500 \times \frac{\text{solversCount}}{\text{totalGuessers}}\right) \quad (0 \text{ to } 500 \text{ pts})$$
++   - If 0 guessers solve, the drawer earns 0 points (encourages clear drawing).
++3. **Live Leaderboard & Animated Increments (`GameView.tsx`):**
++   - When a guesser solves the secret word, `score_update` is broadcast in real time.
++   - The left player roster displays real-time animated score increment badges (`+550`) and dynamically re-ranks players in descending order with rank medals (`🥇`, `🥈`, `🥉`, `#4`).
++4. **End-of-Turn Scoreboard Overlay (`TurnScoreboardModal.tsx`):**
++   - During the 4-second transition between turns, all clients see a celebratory modal revealing the secret word, role badges, points earned this turn, total cumulative scores, and a countdown timer to the next turn.
++5. **Relational Database Persistence (MySQL):**
++   - Updates `players.total_score` on turn completion.
++   - Inserts audit records into `player_round_scores` (`round_id`, `player_id`, `guessed_correctly`, `score_awarded`, `is_drawer`).
++   - Marks `game_rounds.ended_at = NOW()`.
++
++---
++
++## 2. Requirements Mapping
++From [`docs/requirements-checklist.md`](file:///C:/Users/shub1/OneDrive/Desktop/Scribble/docs/requirements-checklist.md):
++- **REQ-MH-08:** Scoring engine: points awarded for correct guesses (faster guesses = more points, drawer points). *(Must Have — Page 1, 2, 5)*
++- **REQ-MH-09:** Live leaderboard & round end score awards / podium. *(Must Have — Page 1, 2, 4, 5)*
++- **WebSocket Protocol Events:**
++  - `score_update` (Server ➔ Clients)
++  - `turn_end` / `round_end` with score summary payload (Server ➔ Clients)
++- **Database Schema:**
++  - `players` (`total_score`)
++  - `game_rounds` (`ended_at`)
++  - `player_round_scores` (`score_awarded`, `guessed_correctly`, `is_drawer`)
++
++---
++
++## 3. Network Event Protocol & Payload Specifications
++
++| Event | Direction | Payload | Description |
++|---|---|---|---|
++| `score_update` | Server ➔ Clients | `{ roomId, playerId, playerName, pointsEarned, newScore }` | Real-time score notification when a guesser solves the word. |
++| `turn_end` | Server ➔ Clients | `{ roomId, secretWord, reason, scores: PlayerDTO[], roundScores: RoundScoreItem[] }` | Concludes turn; reveals secret word and distributes full points breakdown. |
++
++### Data Structures:
++```typescript
++export interface RoundScoreItem {
++  playerId: string;
++  playerName: string;
++  avatarId: string;
++  role: 'DRAWER' | 'GUESSER';
++  pointsEarned: number;
++  totalScore: number;
++  guessedCorrectly: boolean;
++}
++```
++
++---
++
++## 4. Mathematical Defense & Competitive Balance
++
++### Why Decay + Order Bonus?
++1. **Decay without order bonus** creates ties when two players submit within the same second tick.
++2. **Order bonus without decay** ignores whether a player took 5 seconds or 75 seconds to guess.
++3. Combining continuous linear time ratio with discrete arrival bonuses ensures:
++   - A fast guess in the first 5 seconds yields $\sim 500\text{--}550$ points.
++   - A guess at halfway mark yields $\sim 300\text{--}325$ points.
++   - A last-second clutch guess yields $\sim 100\text{--}110$ points.
++
++### Why Proportional Drawer Reward?
++- In Skribbl.io, if a drawer draws something unrecognizable or inappropriate, 0 players will solve it, earning the drawer 0 points.
++- If the drawing is clear, recognizable, and engaging, all players solve it, and the drawer earns the full 500 points reward.
++
++---
++
++## 5. Testing & Verification
++
++Automated test suite [`backend/tests/scoring_engine.test.js`](file:///C:/Users/shub1/OneDrive/Desktop/Scribble/backend/tests/scoring_engine.test.js) executed successfully:
++```text
++=== Phase 8 Dynamic Scoring Engine & Live Leaderboard Test Suite ===
++
++--- Test 1: Pure Scoring Formulas (Speed Decay, Order Bonus & Drawer Reward) ---
++✅ Instant guess (80s/80s, 1st place): { basePoints: 500, orderBonus: 50, totalPoints: 550, timeRemainingRatio: 1 }
++✅ Mid guess (40s/80s, 2nd place): { basePoints: 300, orderBonus: 25, totalPoints: 325, timeRemainingRatio: 0.5 }
++✅ Slow guess (0s/80s, 3rd place): { basePoints: 100, orderBonus: 10, totalPoints: 110, timeRemainingRatio: 0 }
++✅ Drawer points formula verified (0/3 = 0, 1/2 = 250, 2/2 = 500)
++
++--- Test 2: Multi-Client Real-Time Scoring Flow & MySQL Persistence ---
++Alice (Host/Drawer) connected: 300u70L6BKTbuNquAAAS
++✅ Step 1: Alice created room AWKBMT
++Bob (Guesser 1) connected: mFrGYP0jptWP2iQRAAAT
++✅ Step 2: Bob joined room AWKBMT
++Charlie (Guesser 2) connected: mhIgkL1JpVZ0dLBJAAAU
++✅ Step 3: Charlie joined room AWKBMT
++✅ Step 4: Alice received word options. Selecting "pizza"...
++✅ Step 5: Turn started! Beginning guess timing tests...
++
++--- Action A: Bob guesses "pizza" immediately (1st place) ---
++✅ Score Update broadcast received by Alice: Player b84d7426-8578-40bc-b867-6a8e04b9b182 earned +550 pts (Total: 550)
++
++--- Action B: Charlie guesses "pizza" later (2nd place) ---
++✅ Score Update broadcast received by Alice: Player ad10ee23-979e-4c6d-ac6e-bd1b029768f3 earned +525 pts (Total: 525)
++
++--- Action C: Turn ended and score summary received ---
++✅ Round score summary items received: [
++  'BobGuesser (GUESSER): +550 pts (Total: 550)',
++  'CharlieGuesser (GUESSER): +525 pts (Total: 525)',
++  'AliceDrawer (DRAWER): +500 pts (Total: 500)'
++]
++✅ Speed & order bonus verified: Bob (550 pts) > Charlie (525 pts)
++✅ Drawer points verified: Alice received 500 drawer points!
++
++--- Action D: Verifying MySQL database persistence ---
++✅ MySQL players table cumulative scores: [
++  { player_name: 'BobGuesser', total_score: 550 },
++  { player_name: 'CharlieGuesser', total_score: 525 },
++  { player_name: 'AliceDrawer', total_score: 500 }
++]
++✅ MySQL player_round_scores table contains 3 recorded entries.
++✅ MySQL database audit completely verified!
++
++🎉 ALL PHASE 8 DYNAMIC SCORING & LEADERBOARD TESTS PASSED!
++```
+diff --git a/frontend/src/components/TurnScoreboardModal.tsx b/frontend/src/components/TurnScoreboardModal.tsx
+new file mode 100644
+index 0000000..85833b4
+--- /dev/null
++++ b/frontend/src/components/TurnScoreboardModal.tsx
+@@ -0,0 +1,190 @@
++import React, { useState, useEffect } from 'react';
++import { SkribblAvatar } from './SkribblAvatar';
++import { RoundScoreItem } from '../types/game';
++import { Sparkles, Clock, CheckCircle2, Pencil } from 'lucide-react';
++
++interface TurnScoreboardModalProps {
++  secretWord: string;
++  roundScores: RoundScoreItem[];
++  durationSeconds?: number;
++}
++
++export const TurnScoreboardModal: React.FC<TurnScoreboardModalProps> = ({
++  secretWord,
++  roundScores,
++  durationSeconds = 4,
++}) => {
++  const [countdown, setCountdown] = useState<number>(durationSeconds);
++
++  useEffect(() => {
++    const timer = setInterval(() => {
++      setCountdown((prev) => Math.max(0, prev - 1));
++    }, 1000);
++    return () => clearInterval(timer);
++  }, []);
++
++  return (
++    <div
++      style={{
++        position: 'fixed',
++        top: 0,
++        left: 0,
++        right: 0,
++        bottom: 0,
++        backgroundColor: 'rgba(15, 23, 42, 0.75)',
++        backdropFilter: 'blur(6px)',
++        display: 'flex',
++        alignItems: 'center',
++        justifyContent: 'center',
++        zIndex: 50,
++        padding: '1rem',
++        animation: 'fadeIn 0.25s ease',
++      }}
++    >
++      <div
++        style={{
++          width: '100%',
++          maxWidth: '560px',
++          backgroundColor: '#ffffff',
++          borderRadius: '24px',
++          border: '4px solid #1e293b',
++          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
++          overflow: 'hidden',
++          display: 'flex',
++          flexDirection: 'column',
++          animation: 'popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
++        }}
++      >
++        {/* Header Banner */}
++        <div
++          style={{
++            backgroundColor: '#0284c7',
++            padding: '1.25rem 1.5rem',
++            textAlign: 'center',
++            color: '#ffffff',
++            borderBottom: '3px solid #0369a1',
++          }}
++        >
++          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#bae6fd' }}>
++            <Sparkles size={16} /> Turn Concluded
++          </div>
++          <div style={{ fontSize: '1.2rem', fontWeight: 700, marginTop: '0.25rem' }}>
++            The secret word was:
++          </div>
++          <div
++            style={{
++              fontSize: '2rem',
++              fontWeight: 900,
++              letterSpacing: '0.12em',
++              textTransform: 'uppercase',
++              color: '#fef08a',
++              textShadow: '0 2px 4px rgba(0,0,0,0.2)',
++              marginTop: '0.15rem',
++            }}
++          >
++            {secretWord}
++          </div>
++        </div>
++
++        {/* Scoreboard List */}
++        <div style={{ padding: '1.25rem 1.5rem', maxHeight: '360px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
++          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 800, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', paddingBottom: '0.25rem' }}>
++            <span>Rank & Player</span>
++            <span>Turn Score & Total</span>
++          </div>
++
++          {roundScores.map((item, idx) => {
++            const isWinner = idx === 0;
++            const rankIcon = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
++
++            return (
++              <div
++                key={item.playerId}
++                style={{
++                  display: 'flex',
++                  alignItems: 'center',
++                  justifyContent: 'space-between',
++                  padding: '0.65rem 0.9rem',
++                  borderRadius: '14px',
++                  backgroundColor: isWinner ? '#fefce8' : '#f8fafc',
++                  border: isWinner ? '2px solid #eab308' : '1.5px solid #e2e8f0',
++                  boxShadow: isWinner ? '0 4px 6px -1px rgba(234, 179, 8, 0.2)' : 'none',
++                }}
++              >
++                {/* Left: Rank, Avatar & Name */}
++                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
++                  <span style={{ fontSize: '1.1rem', fontWeight: 900, minWidth: '24px', textAlign: 'center' }}>
++                    {rankIcon}
++                  </span>
++                  <SkribblAvatar avatarId={item.avatarId} size={36} />
++                  <div>
++                    <div style={{ fontWeight: 800, fontSize: '0.95rem', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
++                      {item.playerName}
++                      {item.role === 'DRAWER' && (
++                        <span title="Drawer" style={{ color: '#eab308', display: 'inline-flex' }}>
++                          <Pencil size={14} />
++                        </span>
++                      )}
++                      {item.guessedCorrectly && (
++                        <span title="Solved!" style={{ color: '#16a34a', display: 'inline-flex' }}>
++                          <CheckCircle2 size={14} />
++                        </span>
++                      )}
++                    </div>
++                    <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 600 }}>
++                      {item.role === 'DRAWER' ? 'Drawer' : item.guessedCorrectly ? 'Guessed' : 'Missed'}
++                    </span>
++                  </div>
++                </div>
++
++                {/* Right: Points Gained & Total Score */}
++                <div style={{ textAlign: 'right' }}>
++                  <div
++                    style={{
++                      fontWeight: 900,
++                      fontSize: '1rem',
++                      color: item.pointsEarned > 0 ? '#16a34a' : '#94a3b8',
++                    }}
++                  >
++                    +{item.pointsEarned} pts
++                  </div>
++                  <div style={{ fontSize: '0.78rem', color: '#3b82f6', fontWeight: 700 }}>
++                    {item.totalScore} total
++                  </div>
++                </div>
++              </div>
++            );
++          })}
++        </div>
++
++        {/* Footer with Next Drawer Countdown */}
++        <div
++          style={{
++            padding: '0.85rem 1.5rem',
++            backgroundColor: '#f1f5f9',
++            borderTop: '2px solid #e2e8f0',
++            display: 'flex',
++            alignItems: 'center',
++            justifyContent: 'space-between',
++          }}
++        >
++          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#475569', fontSize: '0.88rem', fontWeight: 700 }}>
++            <Clock size={16} /> Next turn starting in:
++          </div>
++          <div
++            style={{
++              backgroundColor: '#0284c7',
++              color: '#ffffff',
++              fontWeight: 900,
++              fontSize: '1rem',
++              padding: '0.2rem 0.75rem',
++              borderRadius: '999px',
++            }}
++          >
++            {countdown}s
++          </div>
++        </div>
++      </div>
++    </div>
++  );
++};
+diff --git a/frontend/src/pages/GameView.tsx b/frontend/src/pages/GameView.tsx
+index 7e481ee..64d632b 100644
+--- a/frontend/src/pages/GameView.tsx
++++ b/frontend/src/pages/GameView.tsx
+@@ -1,13 +1,15 @@
+ import React, { useState, useEffect } from 'react';
+ import { socket } from '../services/socket';
+-import { RoomDTO, PlayerDTO, GameSessionDTO, RemoteDrawStartPayload, RemoteDrawMovePayload, RemoteDrawEndPayload } from '../types/game';
++import { RoomDTO, PlayerDTO, GameSessionDTO, RemoteDrawStartPayload, RemoteDrawMovePayload, RemoteDrawEndPayload, ChatMessage, PlayerGuessedPayload, ScoreUpdatePayload, TurnEndPayload, RoundScoreItem } from '../types/game';
+ import { useCanvas } from '../hooks/useCanvas';
+ import { Canvas } from '../components/Canvas';
+ import { CanvasToolbar } from '../components/CanvasToolbar';
+ import { SkribblAvatar } from '../components/SkribblAvatar';
+ import { WordPickerModal, WordChoice } from '../components/WordPickerModal';
+ import { WordMaskBar } from '../components/WordMaskBar';
+-import { LogOut, Pencil, Eye, Trophy, Sparkles } from 'lucide-react';
++import { ChatBox } from '../components/ChatBox';
++import { TurnScoreboardModal } from '../components/TurnScoreboardModal';
++import { LogOut, Pencil, Eye, Trophy, Sparkles, CheckCircle2 } from 'lucide-react';
+ 
+ interface GameViewProps {
+   room: RoomDTO;
+@@ -42,6 +44,17 @@ export const GameView: React.FC<GameViewProps> = ({
+   const [timeRemaining, setTimeRemaining] = useState<number>(room.settings.drawTimeSeconds || 80);
+   const [turnEndedWord, setTurnEndedWord] = useState<string | null>(null);
+ 
++  // Chat & Guessing State
++  const [messages, setMessages] = useState<ChatMessage[]>([]);
++  const [guessedPlayerIds, setGuessedPlayerIds] = useState<Set<string>>(new Set());
++
++  // Phase 8 Scoring & Leaderboard State
++  const [turnEndSummary, setTurnEndSummary] = useState<{
++    secretWord: string;
++    roundScores: RoundScoreItem[];
++  } | null>(null);
++  const [scorePopups, setScorePopups] = useState<Map<string, number>>(new Map());
++
+   // Is current client the designated drawer?
+   const isDrawer = currentPlayer.id === currentDrawerId;
+   const drawerPlayer = players.find((p) => p.id === currentDrawerId) || players[0];
+@@ -95,6 +108,10 @@ export const GameView: React.FC<GameViewProps> = ({
+     setShowWordPicker(false);
+   };
+ 
++  const handleSendMessage = (text: string) => {
++    socket.emit('send_chat_message', { roomId: room.id, text });
++  };
++
+   // Socket listener setup for remote spectators and turn transitions
+   useEffect(() => {
+     // 1. Initial hydration request for current round's drawing
+@@ -146,6 +163,8 @@ export const GameView: React.FC<GameViewProps> = ({
+       setShowWordPicker(true);
+       setDrawerChoosingBanner(null);
+       setTurnEndedWord(null);
++      setTurnEndSummary(null);
++      setGuessedPlayerIds(new Set());
+       handleClear();
+     };
+ 
+@@ -154,6 +173,8 @@ export const GameView: React.FC<GameViewProps> = ({
+       setDrawerChoosingBanner(`${data.drawerName} is choosing a word...`);
+       setShowWordPicker(false);
+       setTurnEndedWord(null);
++      setTurnEndSummary(null);
++      setGuessedPlayerIds(new Set());
+       handleClear();
+     };
+ 
+@@ -172,6 +193,8 @@ export const GameView: React.FC<GameViewProps> = ({
+       setShowWordPicker(false);
+       setDrawerChoosingBanner(null);
+       setTurnEndedWord(null);
++      setTurnEndSummary(null);
++      setGuessedPlayerIds(new Set());
+ 
+       setCurrentRound(data.currentRound);
+       setCurrentTurn(data.currentTurn);
+@@ -197,8 +220,54 @@ export const GameView: React.FC<GameViewProps> = ({
+     };
+ 
+     // 7. Turn Ended (Time expired or all guessed)
+-    const onTurnEnd = (data: { secretWord: string; reason: string }) => {
++    const onTurnEnd = (data: TurnEndPayload) => {
+       setTurnEndedWord(data.secretWord);
++      if (data.scores) {
++        setPlayers(data.scores);
++      }
++      if (data.roundScores && data.roundScores.length > 0) {
++        setTurnEndSummary({
++          secretWord: data.secretWord,
++          roundScores: data.roundScores,
++        });
++      }
++    };
++
++    // 8. Real-Time Chat & Guess Verification Listeners
++    const onChatMessage = (message: ChatMessage) => {
++      setMessages((prev) => [...prev, message]);
++    };
++
++    const onPlayerGuessed = (payload: PlayerGuessedPayload) => {
++      setGuessedPlayerIds((prev) => new Set(prev).add(payload.playerId));
++      if (payload.pointsEarned && payload.newScore !== undefined) {
++        setPlayers((prev) =>
++          prev.map((p) => (p.id === payload.playerId ? { ...p, score: payload.newScore! } : p))
++        );
++        setScorePopups((prev) => new Map(prev).set(payload.playerId, payload.pointsEarned!));
++        setTimeout(() => {
++          setScorePopups((prev) => {
++            const next = new Map(prev);
++            next.delete(payload.playerId);
++            return next;
++          });
++        }, 2500);
++      }
++    };
++
++    // 9. Live Scoreboard Update
++    const onScoreUpdate = (data: ScoreUpdatePayload) => {
++      setPlayers((prev) =>
++        prev.map((p) => (p.id === data.playerId ? { ...p, score: data.newScore } : p))
++      );
++      setScorePopups((prev) => new Map(prev).set(data.playerId, data.pointsEarned));
++      setTimeout(() => {
++        setScorePopups((prev) => {
++          const next = new Map(prev);
++          next.delete(data.playerId);
++          return next;
++        });
++      }, 2500);
+     };
+ 
+     socket.on('draw_start', onDrawStart);
+@@ -216,6 +285,9 @@ export const GameView: React.FC<GameViewProps> = ({
+     socket.on('word_hint', onWordHint);
+     socket.on('turn_timer_tick', onTurnTimerTick);
+     socket.on('turn_end', onTurnEnd);
++    socket.on('chat_message', onChatMessage);
++    socket.on('player_guessed_correct', onPlayerGuessed);
++    socket.on('score_update', onScoreUpdate);
+ 
+     return () => {
+       socket.off('draw_start', onDrawStart);
+@@ -233,6 +305,9 @@ export const GameView: React.FC<GameViewProps> = ({
+       socket.off('word_hint', onWordHint);
+       socket.off('turn_timer_tick', onTurnTimerTick);
+       socket.off('turn_end', onTurnEnd);
++      socket.off('chat_message', onChatMessage);
++      socket.off('player_guessed_correct', onPlayerGuessed);
++      socket.off('score_update', onScoreUpdate);
+     };
+   }, [
+     room.id,
+@@ -249,7 +324,7 @@ export const GameView: React.FC<GameViewProps> = ({
+     <div
+       style={{
+         width: '100%',
+-        maxWidth: '1100px',
++        maxWidth: '1280px',
+         margin: '0 auto',
+         padding: '1rem',
+         display: 'flex',
+@@ -266,6 +341,15 @@ export const GameView: React.FC<GameViewProps> = ({
+         />
+       )}
+ 
++      {/* End-of-Turn Score Summary Modal */}
++      {turnEndSummary && (
++        <TurnScoreboardModal
++          secretWord={turnEndSummary.secretWord}
++          roundScores={turnEndSummary.roundScores}
++          durationSeconds={4}
++        />
++      )}
++
+       {/* Top Match Status Header */}
+       <div
+         style={{
+@@ -353,11 +437,11 @@ export const GameView: React.FC<GameViewProps> = ({
+         </div>
+       )}
+ 
+-      {/* Main Game Arena Grid */}
++      {/* Main Game Arena Grid: 3-column layout (Roster | Canvas | Chat) */}
+       <div
+         style={{
+           display: 'grid',
+-          gridTemplateColumns: '220px 1fr',
++          gridTemplateColumns: 'minmax(180px, 200px) 1fr minmax(260px, 300px)',
+           gap: '1rem',
+           alignItems: 'start',
+         }}
+@@ -385,54 +469,83 @@ export const GameView: React.FC<GameViewProps> = ({
+           </div>
+ 
+           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '520px', overflowY: 'auto' }}>
+-            {players.map((p, idx) => {
+-              const isTurnDrawer = p.id === currentDrawerId;
+-              const isSelf = p.id === currentPlayer.id;
+-
+-              return (
+-                <div
+-                  key={p.id}
+-                  style={{
+-                    display: 'flex',
+-                    alignItems: 'center',
+-                    gap: '0.6rem',
+-                    padding: '0.5rem 0.65rem',
+-                    borderRadius: '10px',
+-                    background: isTurnDrawer ? '#fefce8' : isSelf ? '#eff6ff' : '#f8fafc',
+-                    border: isTurnDrawer ? '2px solid #eab308' : isSelf ? '1.5px solid #3b82f6' : '1px solid #e2e8f0',
+-                  }}
+-                >
+-                  {/* Rank number */}
+-                  <span style={{ fontWeight: 800, fontSize: '0.8rem', color: '#64748b', width: '16px' }}>
+-                    #{idx + 1}
+-                  </span>
+-
+-                  {/* Player Avatar */}
+-                  <SkribblAvatar avatarId={p.avatarId} size={34} />
+-
+-                  {/* Player Name and Score */}
+-                  <div style={{ flex: 1, minWidth: 0 }}>
+-                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+-                      {p.name} {isSelf && '(You)'}
+-                    </div>
+-                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#16a34a' }}>
+-                      {p.score || 0} pts
++            {[...players]
++              .sort((a, b) => (b.score || 0) - (a.score || 0))
++              .map((p, idx) => {
++                const isTurnDrawer = p.id === currentDrawerId;
++                const isSelf = p.id === currentPlayer.id;
++                const isGuessed = guessedPlayerIds.has(p.id);
++                const popupPoints = scorePopups.get(p.id);
++                const rankBadge = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
++
++                return (
++                  <div
++                    key={p.id}
++                    style={{
++                      display: 'flex',
++                      alignItems: 'center',
++                      gap: '0.6rem',
++                      padding: '0.5rem 0.65rem',
++                      borderRadius: '10px',
++                      background: isGuessed ? '#f0fdf4' : isTurnDrawer ? '#fefce8' : isSelf ? '#eff6ff' : '#f8fafc',
++                      border: isGuessed ? '2px solid #22c55e' : isTurnDrawer ? '2px solid #eab308' : isSelf ? '1.5px solid #3b82f6' : '1px solid #e2e8f0',
++                      transition: 'all 0.25s ease',
++                    }}
++                  >
++                    {/* Rank medal / number */}
++                    <span style={{ fontWeight: 800, fontSize: '0.85rem', color: '#64748b', width: '22px', textAlign: 'center' }}>
++                      {rankBadge}
++                    </span>
++
++                    {/* Player Avatar */}
++                    <SkribblAvatar avatarId={p.avatarId} size={34} />
++
++                    {/* Player Name and Score */}
++                    <div style={{ flex: 1, minWidth: 0 }}>
++                      <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
++                        {p.name} {isSelf && '(You)'}
++                      </div>
++                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
++                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#16a34a' }}>
++                          {p.score || 0} pts
++                        </span>
++                        {/* Live Score Increment Popup */}
++                        {popupPoints !== undefined && (
++                          <span
++                            style={{
++                              fontSize: '0.72rem',
++                              fontWeight: 900,
++                              color: '#15803d',
++                              backgroundColor: '#dcfce7',
++                              padding: '0.1rem 0.35rem',
++                              borderRadius: '4px',
++                              border: '1px solid #86efac',
++                            }}
++                          >
++                            +{popupPoints}
++                          </span>
++                        )}
++                      </div>
+                     </div>
+-                  </div>
+ 
+-                  {/* Drawer Pencil Badge */}
+-                  {isTurnDrawer && (
+-                    <span title="Drawing now!" style={{ color: '#eab308', display: 'inline-flex' }}>
+-                      <Pencil size={16} />
+-                    </span>
+-                  )}
+-                </div>
+-              );
+-            })}
++                    {/* Drawer Pencil or Guessed Checkmark Badge */}
++                    {isTurnDrawer && (
++                      <span title="Drawing now!" style={{ color: '#eab308', display: 'inline-flex' }}>
++                        <Pencil size={16} />
++                      </span>
++                    )}
++                    {isGuessed && (
++                      <span title="Guessed the word!" style={{ color: '#16a34a', display: 'inline-flex' }}>
++                        <CheckCircle2 size={16} />
++                      </span>
++                    )}
++                  </div>
++                );
++              })}
+           </div>
+         </div>
+ 
+-        {/* Right Column: Canvas + Role-Restricted Controls */}
++        {/* Center Column: Canvas + Role-Restricted Controls */}
+         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+           {/* Canvas Component */}
+           <div style={{ width: '100%', height: '500px', position: 'relative' }}>
+@@ -530,6 +643,17 @@ export const GameView: React.FC<GameViewProps> = ({
+             </button>
+           </div>
+         </div>
++
++        {/* Right Column: Interactive Real-Time Game Chat & Guess Verification */}
++        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
++          <ChatBox
++            messages={messages}
++            onSendMessage={handleSendMessage}
++            isDrawer={isDrawer}
++            hasGuessed={guessedPlayerIds.has(currentPlayer.id)}
++            isDrawingPhase={!showWordPicker && !drawerChoosingBanner && !turnEndedWord}
++          />
++        </div>
+       </div>
+     </div>
+   );
+diff --git a/frontend/src/types/game.ts b/frontend/src/types/game.ts
+index b470d4a..644db0b 100644
+--- a/frontend/src/types/game.ts
++++ b/frontend/src/types/game.ts
+@@ -103,3 +103,60 @@ export interface RemoteDrawUndoPayload {
+ export interface RemoteCanvasClearPayload {
+   roomId: string;
+ }
++
++// Phase 7: Real-Time Chat & Guess Verification Contracts
++export type ChatMessageType =
++  | 'CHAT'
++  | 'SYSTEM'
++  | 'SUCCESS'
++  | 'SELF_SUCCESS'
++  | 'CLOSE_HINT'
++  | 'GUESSED_CHAT'
++  | 'WARNING';
++
++export interface ChatMessage {
++  id: string;
++  senderId: string;
++  senderName: string;
++  text: string;
++  type: ChatMessageType;
++  timestamp: number;
++}
++
++export interface PlayerGuessedPayload {
++  roomId: string;
++  playerId: string;
++  playerName: string;
++  guessOrder: number;
++  pointsEarned?: number;
++  newScore?: number;
++}
++
++// Phase 8: Dynamic Scoring & Live Leaderboard Contracts
++export interface ScoreUpdatePayload {
++  roomId: string;
++  playerId: string;
++  playerName?: string;
++  pointsEarned: number;
++  newScore: number;
++}
++
++export interface RoundScoreItem {
++  playerId: string;
++  playerName: string;
++  avatarId: string;
++  role: 'DRAWER' | 'GUESSER';
++  pointsEarned: number;
++  totalScore: number;
++  guessedCorrectly: boolean;
++}
++
++export interface TurnEndPayload {
++  roomId: string;
++  secretWord: string;
++  reason: string;
++  scores?: PlayerDTO[];
++  roundScores?: RoundScoreItem[];
++}
++
++

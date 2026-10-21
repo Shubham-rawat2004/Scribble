@@ -1,19 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { socket } from '../services/socket';
-import { RoomDTO, PlayerDTO, GameSessionDTO, RemoteDrawStartPayload, RemoteDrawMovePayload, RemoteDrawEndPayload } from '../types/game';
+import { RoomDTO, PlayerDTO, GameSessionDTO, RemoteDrawStartPayload, RemoteDrawMovePayload, RemoteDrawEndPayload, ChatMessage, PlayerGuessedPayload, ScoreUpdatePayload, TurnEndPayload, RoundScoreItem, GameOverPayload } from '../types/game';
 import { useCanvas } from '../hooks/useCanvas';
 import { Canvas } from '../components/Canvas';
 import { CanvasToolbar } from '../components/CanvasToolbar';
 import { SkribblAvatar } from '../components/SkribblAvatar';
 import { WordPickerModal, WordChoice } from '../components/WordPickerModal';
 import { WordMaskBar } from '../components/WordMaskBar';
-import { LogOut, Pencil, Eye, Trophy, Sparkles } from 'lucide-react';
+import { ChatBox } from '../components/ChatBox';
+import { TurnScoreboardModal } from '../components/TurnScoreboardModal';
+import { GameOverModal } from '../components/GameOverModal';
+import { StrokeReplayModal } from '../components/StrokeReplayModal';
+import { DrawStroke } from '../types/canvas';
+import { LogOut, Pencil, Eye, Trophy, Sparkles, CheckCircle2, UserX, UserMinus, Film } from 'lucide-react';
 
 interface GameViewProps {
   room: RoomDTO;
   currentPlayer: PlayerDTO;
   session: GameSessionDTO;
   onLeaveRoom: () => void;
+  onReturnToLobby?: (room: RoomDTO) => void;
 }
 
 export const GameView: React.FC<GameViewProps> = ({
@@ -21,6 +27,7 @@ export const GameView: React.FC<GameViewProps> = ({
   currentPlayer,
   session,
   onLeaveRoom,
+  onReturnToLobby,
 }) => {
   // Active drawer determination (server-authoritative)
   const initialDrawerId = session.currentDrawerId || room.currentDrawerId || room.hostPlayerId;
@@ -42,8 +49,30 @@ export const GameView: React.FC<GameViewProps> = ({
   const [timeRemaining, setTimeRemaining] = useState<number>(room.settings.drawTimeSeconds || 80);
   const [turnEndedWord, setTurnEndedWord] = useState<string | null>(null);
 
-  // Is current client the designated drawer?
-  const isDrawer = currentPlayer.id === currentDrawerId;
+  // Chat & Guessing State
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [guessedPlayerIds, setGuessedPlayerIds] = useState<Set<string>>(new Set());
+
+  // Phase 8 Scoring & Leaderboard State
+  const [turnEndSummary, setTurnEndSummary] = useState<{
+    secretWord: string;
+    roundScores: RoundScoreItem[];
+  } | null>(null);
+  const [scorePopups, setScorePopups] = useState<Map<string, number>>(new Map());
+
+  // Phase 9 Game Over & Victory Podium State
+  const [gameOverData, setGameOverData] = useState<GameOverPayload | null>(null);
+
+  // Stroke Replay State (Medium Priority Feature)
+  const [lastTurnReplay, setLastTurnReplay] = useState<{
+    secretWord: string;
+    drawerName?: string;
+    strokes: DrawStroke[];
+  } | null>(null);
+  const [showReplayModal, setShowReplayModal] = useState<boolean>(false);
+
+  // Is current client the designated drawer? (Spectators never draw)
+  const isDrawer = !currentPlayer.isSpectator && currentPlayer.id === currentDrawerId;
   const drawerPlayer = players.find((p) => p.id === currentDrawerId) || players[0];
 
   // Canvas hook with dual-mode (Drawer emitting vs Guesser listening)
@@ -95,12 +124,45 @@ export const GameView: React.FC<GameViewProps> = ({
     setShowWordPicker(false);
   };
 
+  const handleSendMessage = (text: string) => {
+    socket.emit('send_chat_message', { roomId: room.id, text });
+  };
+
+  const handleTriggerReturnToLobby = () => {
+    socket.emit('return_to_lobby', { roomId: room.id });
+  };
+
   // Socket listener setup for remote spectators and turn transitions
   useEffect(() => {
     // 1. Initial hydration request for current round's drawing
     socket.emit('request_canvas_state', { roomId: room.id }, (res?: { strokes: any[] }) => {
       if (res && res.strokes) {
         hydrateStrokes(res.strokes);
+      }
+    });
+
+    // 1b. Fetch active room roster to ensure complete player list
+    socket.emit('get_room_players', { roomId: room.id }, (res?: { players: PlayerDTO[] }) => {
+      if (res?.players && res.players.length > 0) {
+        setPlayers(res.players);
+      }
+    });
+
+    // 1c. Fetch existing room chat history (including lobby notices)
+    socket.emit('get_chat_history', { roomId: room.id }, (res?: { messages: ChatMessage[] }) => {
+      if (res?.messages && res.messages.length > 0) {
+        setMessages(res.messages);
+      }
+    });
+
+    // 1d. Fetch last turn replay if available
+    socket.emit('get_last_replay', { roomId: room.id }, (res?: { success: boolean; secretWord?: string; drawerName?: string; strokes?: DrawStroke[] }) => {
+      if (res?.success && res.strokes && res.strokes.length > 0) {
+        setLastTurnReplay({
+          secretWord: res.secretWord || '',
+          drawerName: res.drawerName || 'Drawer',
+          strokes: res.strokes,
+        });
       }
     });
 
@@ -141,11 +203,18 @@ export const GameView: React.FC<GameViewProps> = ({
     };
 
     // 3. Word Selection Listeners
-    const onWordSelectionStart = (data: { words: WordChoice[]; durationSeconds: number }) => {
+    const onWordSelectionStart = (data: { words: WordChoice[]; durationSeconds: number; drawerId?: string }) => {
+      if (data.drawerId) {
+        setCurrentDrawerId(data.drawerId);
+      } else {
+        setCurrentDrawerId(currentPlayer.id);
+      }
       setWordOptions(data.words);
       setShowWordPicker(true);
       setDrawerChoosingBanner(null);
       setTurnEndedWord(null);
+      setTurnEndSummary(null);
+      setGuessedPlayerIds(new Set());
       handleClear();
     };
 
@@ -154,12 +223,15 @@ export const GameView: React.FC<GameViewProps> = ({
       setDrawerChoosingBanner(`${data.drawerName} is choosing a word...`);
       setShowWordPicker(false);
       setTurnEndedWord(null);
+      setTurnEndSummary(null);
+      setGuessedPlayerIds(new Set());
       handleClear();
     };
 
     // 4. Turn Started (Word Chosen)
     const onTurnStart = (data: {
       role: 'DRAWER' | 'GUESSER';
+      drawerId?: string;
       secretWord?: string;
       wordMask?: string;
       wordLength?: number;
@@ -169,9 +241,16 @@ export const GameView: React.FC<GameViewProps> = ({
       currentTurn: number;
       totalTurnsInRound: number;
     }) => {
+      if (data.drawerId) {
+        setCurrentDrawerId(data.drawerId);
+      } else if (data.role === 'DRAWER') {
+        setCurrentDrawerId(currentPlayer.id);
+      }
       setShowWordPicker(false);
       setDrawerChoosingBanner(null);
       setTurnEndedWord(null);
+      setTurnEndSummary(null);
+      setGuessedPlayerIds(new Set());
 
       setCurrentRound(data.currentRound);
       setCurrentTurn(data.currentTurn);
@@ -197,8 +276,84 @@ export const GameView: React.FC<GameViewProps> = ({
     };
 
     // 7. Turn Ended (Time expired or all guessed)
-    const onTurnEnd = (data: { secretWord: string; reason: string }) => {
+    const onTurnEnd = (data: TurnEndPayload) => {
       setTurnEndedWord(data.secretWord);
+      if (data.scores) {
+        setPlayers(data.scores);
+      }
+      if (data.roundScores && data.roundScores.length > 0) {
+        setTurnEndSummary({
+          secretWord: data.secretWord,
+          roundScores: data.roundScores,
+        });
+      }
+      if (data.strokes && data.strokes.length > 0) {
+        setLastTurnReplay({
+          secretWord: data.secretWord,
+          drawerName: data.drawerName,
+          strokes: data.strokes,
+        });
+      }
+    };
+
+    // 8. Real-Time Chat & Guess Verification Listeners
+    const onChatMessage = (message: ChatMessage) => {
+      setMessages((prev) => [...prev, message]);
+    };
+
+    const onChatHistory = (data: { roomId: string; messages: ChatMessage[] }) => {
+      if (data?.messages) {
+        setMessages(data.messages);
+      }
+    };
+
+    const onPlayerGuessed = (payload: PlayerGuessedPayload) => {
+      setGuessedPlayerIds((prev) => new Set(prev).add(payload.playerId));
+      if (payload.pointsEarned && payload.newScore !== undefined) {
+        setPlayers((prev) =>
+          prev.map((p) => (p.id === payload.playerId ? { ...p, score: payload.newScore! } : p))
+        );
+        setScorePopups((prev) => new Map(prev).set(payload.playerId, payload.pointsEarned!));
+        setTimeout(() => {
+          setScorePopups((prev) => {
+            const next = new Map(prev);
+            next.delete(payload.playerId);
+            return next;
+          });
+        }, 2500);
+      }
+    };
+
+    // 9. Live Scoreboard Update
+    const onScoreUpdate = (data: ScoreUpdatePayload) => {
+      setPlayers((prev) =>
+        prev.map((p) => (p.id === data.playerId ? { ...p, score: data.newScore } : p))
+      );
+      setScorePopups((prev) => new Map(prev).set(data.playerId, data.pointsEarned));
+      setTimeout(() => {
+        setScorePopups((prev) => {
+          const next = new Map(prev);
+          next.delete(data.playerId);
+          return next;
+        });
+      }, 2500);
+    };
+
+    // 10. Game Over & Return to Lobby Listeners
+    const onGameOver = (data: GameOverPayload) => {
+      setGameOverData(data);
+      setTurnEndSummary(null);
+    };
+
+    const onReturnedToLobby = (data: { room: RoomDTO }) => {
+      if (onReturnToLobby) {
+        onReturnToLobby(data.room);
+      }
+    };
+
+    const onKicked = (data: { reason?: string }) => {
+      alert(data?.reason || 'You were kicked from the room.');
+      onLeaveRoom();
     };
 
     socket.on('draw_start', onDrawStart);
@@ -209,6 +364,7 @@ export const GameView: React.FC<GameViewProps> = ({
     socket.on('canvas_init', onCanvasInit);
     socket.on('player_joined', onPlayerJoined);
     socket.on('player_left', onPlayerLeft);
+    socket.on('kicked', onKicked);
 
     socket.on('word_selection_start', onWordSelectionStart);
     socket.on('drawer_choosing_word', onDrawerChoosingWord);
@@ -216,6 +372,12 @@ export const GameView: React.FC<GameViewProps> = ({
     socket.on('word_hint', onWordHint);
     socket.on('turn_timer_tick', onTurnTimerTick);
     socket.on('turn_end', onTurnEnd);
+    socket.on('chat_message', onChatMessage);
+    socket.on('chat_history', onChatHistory);
+    socket.on('player_guessed_correct', onPlayerGuessed);
+    socket.on('score_update', onScoreUpdate);
+    socket.on('game_over', onGameOver);
+    socket.on('returned_to_lobby', onReturnedToLobby);
 
     return () => {
       socket.off('draw_start', onDrawStart);
@@ -226,6 +388,7 @@ export const GameView: React.FC<GameViewProps> = ({
       socket.off('canvas_init', onCanvasInit);
       socket.off('player_joined', onPlayerJoined);
       socket.off('player_left', onPlayerLeft);
+      socket.off('kicked', onKicked);
 
       socket.off('word_selection_start', onWordSelectionStart);
       socket.off('drawer_choosing_word', onDrawerChoosingWord);
@@ -233,6 +396,12 @@ export const GameView: React.FC<GameViewProps> = ({
       socket.off('word_hint', onWordHint);
       socket.off('turn_timer_tick', onTurnTimerTick);
       socket.off('turn_end', onTurnEnd);
+      socket.off('chat_message', onChatMessage);
+      socket.off('chat_history', onChatHistory);
+      socket.off('player_guessed_correct', onPlayerGuessed);
+      socket.off('score_update', onScoreUpdate);
+      socket.off('game_over', onGameOver);
+      socket.off('returned_to_lobby', onReturnedToLobby);
     };
   }, [
     room.id,
@@ -243,13 +412,40 @@ export const GameView: React.FC<GameViewProps> = ({
     applyRemoteClear,
     hydrateStrokes,
     handleClear,
+    onLeaveRoom,
   ]);
+
+  const handleKickPlayer = (targetPlayerId: string, playerName: string) => {
+    if (!window.confirm(`Are you sure you want to kick ${playerName}?`)) return;
+    socket.emit(
+      'kick_player',
+      { roomId: room.id, targetPlayerId },
+      (res: { success: boolean; error?: string }) => {
+        if (!res.success && res.error) {
+          alert(res.error);
+        }
+      }
+    );
+  };
+
+  const handleVoteKick = (targetPlayerId: string, playerName: string) => {
+    if (!window.confirm(`Vote to kick ${playerName}?`)) return;
+    socket.emit(
+      'vote_kick',
+      { roomId: room.id, targetPlayerId },
+      (res: { success: boolean; error?: string; votes?: number; threshold?: number }) => {
+        if (!res.success && res.error) {
+          alert(res.error);
+        }
+      }
+    );
+  };
 
   return (
     <div
       style={{
         width: '100%',
-        maxWidth: '1100px',
+        maxWidth: '1280px',
         margin: '0 auto',
         padding: '1rem',
         display: 'flex',
@@ -258,11 +454,43 @@ export const GameView: React.FC<GameViewProps> = ({
       }}
     >
       {/* Drawer Word Selection Modal (Only shown to active drawer) */}
-      {showWordPicker && isDrawer && (
+      {showWordPicker && (
         <WordPickerModal
           words={wordOptions}
           durationSeconds={15}
           onSelectWord={handleSelectWord}
+        />
+      )}
+
+      {/* End-of-Turn Score Summary Modal */}
+      {turnEndSummary && !gameOverData && (
+        <TurnScoreboardModal
+          secretWord={turnEndSummary.secretWord}
+          roundScores={turnEndSummary.roundScores}
+          durationSeconds={4}
+          isRoundEnd={currentTurn >= totalTurnsInRound}
+          currentRound={currentRound}
+          onOpenReplay={() => setShowReplayModal(true)}
+        />
+      )}
+
+      {/* Stroke Replay Modal */}
+      {showReplayModal && lastTurnReplay && (
+        <StrokeReplayModal
+          secretWord={lastTurnReplay.secretWord}
+          drawerName={lastTurnReplay.drawerName}
+          strokes={lastTurnReplay.strokes}
+          onClose={() => setShowReplayModal(false)}
+        />
+      )}
+
+      {/* Match Over Victory Podium Modal */}
+      {gameOverData && (
+        <GameOverModal
+          gameOverData={gameOverData}
+          currentPlayer={currentPlayer}
+          onReturnToLobby={handleTriggerReturnToLobby}
+          onLeave={onLeaveRoom}
         />
       )}
 
@@ -319,19 +547,46 @@ export const GameView: React.FC<GameViewProps> = ({
               wordMask={wordMask}
               wordLength={wordLength}
               timeRemaining={timeRemaining}
+              gameMode={room.settings.gameMode}
             />
           )}
         </div>
 
-        {/* Right: Leave Game */}
-        <button
-          type="button"
-          onClick={onLeaveRoom}
-          className="btn btn-outline"
-          style={{ padding: '0.4rem 0.85rem', fontSize: '0.85rem', fontWeight: 700, color: '#dc2626', borderColor: '#fca5a5' }}
-        >
-          <LogOut size={16} /> Leave
-        </button>
+        {/* Right: Replay Button & Leave Game */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+          {lastTurnReplay && (
+            <button
+              type="button"
+              onClick={() => setShowReplayModal(true)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                padding: '0.4rem 0.85rem',
+                fontSize: '0.85rem',
+                fontWeight: 800,
+                color: '#0284c7',
+                backgroundColor: '#f0f9ff',
+                border: '1.5px solid #bae6fd',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+              }}
+              title="Watch stroke replay of the previous turn"
+            >
+              <Film size={15} /> Replay
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={onLeaveRoom}
+            className="btn btn-outline"
+            style={{ padding: '0.4rem 0.85rem', fontSize: '0.85rem', fontWeight: 700, color: '#dc2626', borderColor: '#fca5a5' }}
+          >
+            <LogOut size={16} /> Leave
+          </button>
+        </div>
       </div>
 
       {/* Turn Ended Alert (Displays revealed word before advancing) */}
@@ -353,11 +608,33 @@ export const GameView: React.FC<GameViewProps> = ({
         </div>
       )}
 
-      {/* Main Game Arena Grid */}
+      {/* Dedicated Spectator Mode Banner */}
+      {currentPlayer.isSpectator && (
+        <div
+          style={{
+            background: '#f5f3ff',
+            border: '2px solid #c4b5fd',
+            borderRadius: '12px',
+            padding: '0.65rem 1.25rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.65rem',
+            color: '#6d28d9',
+            fontWeight: 800,
+            fontSize: '0.92rem',
+            boxShadow: '0 2px 4px rgba(124, 58, 237, 0.08)',
+          }}
+        >
+          <Eye size={20} color="#7c3aed" />
+          <span>Spectator Mode Active: You are watching the match live without drawing turns.</span>
+        </div>
+      )}
+
+      {/* Main Game Arena Grid: 3-column layout (Roster | Canvas | Chat) */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: '220px 1fr',
+          gridTemplateColumns: 'minmax(180px, 200px) 1fr minmax(260px, 300px)',
           gap: '1rem',
           alignItems: 'start',
         }}
@@ -385,54 +662,141 @@ export const GameView: React.FC<GameViewProps> = ({
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '520px', overflowY: 'auto' }}>
-            {players.map((p, idx) => {
-              const isTurnDrawer = p.id === currentDrawerId;
-              const isSelf = p.id === currentPlayer.id;
+            {[...players]
+              .sort((a, b) => (b.score || 0) - (a.score || 0))
+              .map((p, idx) => {
+                const isTurnDrawer = p.id === currentDrawerId;
+                const isSelf = p.id === currentPlayer.id;
+                const isGuessed = guessedPlayerIds.has(p.id);
+                const popupPoints = scorePopups.get(p.id);
+                const rankBadge = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
 
-              return (
-                <div
-                  key={p.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.6rem',
-                    padding: '0.5rem 0.65rem',
-                    borderRadius: '10px',
-                    background: isTurnDrawer ? '#fefce8' : isSelf ? '#eff6ff' : '#f8fafc',
-                    border: isTurnDrawer ? '2px solid #eab308' : isSelf ? '1.5px solid #3b82f6' : '1px solid #e2e8f0',
-                  }}
-                >
-                  {/* Rank number */}
-                  <span style={{ fontWeight: 800, fontSize: '0.8rem', color: '#64748b', width: '16px' }}>
-                    #{idx + 1}
-                  </span>
-
-                  {/* Player Avatar */}
-                  <SkribblAvatar avatarId={p.avatarId} size={34} />
-
-                  {/* Player Name and Score */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {p.name} {isSelf && '(You)'}
-                    </div>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#16a34a' }}>
-                      {p.score || 0} pts
-                    </div>
-                  </div>
-
-                  {/* Drawer Pencil Badge */}
-                  {isTurnDrawer && (
-                    <span title="Drawing now!" style={{ color: '#eab308', display: 'inline-flex' }}>
-                      <Pencil size={16} />
+                return (
+                  <div
+                    key={p.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.6rem',
+                      padding: '0.5rem 0.65rem',
+                      borderRadius: '10px',
+                      background: isGuessed ? '#f0fdf4' : isTurnDrawer ? '#fefce8' : isSelf ? '#eff6ff' : '#f8fafc',
+                      border: isGuessed ? '2px solid #22c55e' : isTurnDrawer ? '2px solid #eab308' : isSelf ? '1.5px solid #3b82f6' : '1px solid #e2e8f0',
+                      transition: 'all 0.25s ease',
+                    }}
+                  >
+                    {/* Rank medal / number */}
+                    <span style={{ fontWeight: 800, fontSize: '0.85rem', color: '#64748b', width: '22px', textAlign: 'center' }}>
+                      {rankBadge}
                     </span>
-                  )}
-                </div>
-              );
-            })}
+
+                    {/* Player Avatar */}
+                    <SkribblAvatar avatarId={p.avatarId} size={34} />
+
+                    {/* Player Name and Score */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {p.name} {isSelf && '(You)'}
+                        {p.isSpectator && (
+                          <span
+                            style={{
+                              fontSize: '0.68rem',
+                              color: '#7c3aed',
+                              backgroundColor: '#ede9fe',
+                              padding: '0.05rem 0.35rem',
+                              borderRadius: '4px',
+                              fontWeight: 800,
+                              marginLeft: '0.35rem',
+                            }}
+                          >
+                            Spectator
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#16a34a' }}>
+                          {p.score || 0} pts
+                        </span>
+                        {/* Live Score Increment Popup */}
+                        {popupPoints !== undefined && (
+                          <span
+                            style={{
+                              fontSize: '0.72rem',
+                              fontWeight: 900,
+                              color: '#15803d',
+                              backgroundColor: '#dcfce7',
+                              padding: '0.1rem 0.35rem',
+                              borderRadius: '4px',
+                              border: '1px solid #86efac',
+                            }}
+                          >
+                            +{popupPoints}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Drawer Pencil or Guessed Checkmark Badge */}
+                    {isTurnDrawer && (
+                      <span title="Drawing now!" style={{ color: '#eab308', display: 'inline-flex' }}>
+                        <Pencil size={16} />
+                      </span>
+                    )}
+                    {isGuessed && (
+                      <span title="Guessed the word!" style={{ color: '#16a34a', display: 'inline-flex' }}>
+                        <CheckCircle2 size={16} />
+                      </span>
+                    )}
+
+                    {/* Moderation Controls: Host kick vs Democratic votekick */}
+                    {currentPlayer.isHost && !p.isHost && (
+                      <button
+                        type="button"
+                        title={`Kick ${p.name}`}
+                        onClick={() => handleKickPlayer(p.id, p.name)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#ef4444',
+                          cursor: 'pointer',
+                          padding: '0.2rem',
+                          borderRadius: '4px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          marginLeft: '0.25rem',
+                        }}
+                      >
+                        <UserX size={15} />
+                      </button>
+                    )}
+
+                    {!currentPlayer.isHost && !isSelf && (
+                      <button
+                        type="button"
+                        title={`Vote to kick ${p.name}`}
+                        onClick={() => handleVoteKick(p.id, p.name)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#ea580c',
+                          cursor: 'pointer',
+                          padding: '0.2rem',
+                          borderRadius: '4px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          marginLeft: '0.25rem',
+                        }}
+                      >
+                        <UserMinus size={15} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
           </div>
         </div>
 
-        {/* Right Column: Canvas + Role-Restricted Controls */}
+        {/* Center Column: Canvas + Role-Restricted Controls */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
           {/* Canvas Component */}
           <div style={{ width: '100%', height: '500px', position: 'relative' }}>
@@ -529,6 +893,17 @@ export const GameView: React.FC<GameViewProps> = ({
               🔄 Toggle Role (Demo Drawer / Guesser View)
             </button>
           </div>
+        </div>
+
+        {/* Right Column: Interactive Real-Time Game Chat & Guess Verification */}
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+          <ChatBox
+            messages={messages}
+            onSendMessage={handleSendMessage}
+            isDrawer={isDrawer}
+            hasGuessed={guessedPlayerIds.has(currentPlayer.id)}
+            isDrawingPhase={!showWordPicker && !drawerChoosingBanner && !turnEndedWord}
+          />
         </div>
       </div>
     </div>

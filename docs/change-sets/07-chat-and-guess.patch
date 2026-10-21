@@ -1,0 +1,1346 @@
+﻿diff --git a/backend/src/game/GuessManager.ts b/backend/src/game/GuessManager.ts
+new file mode 100644
+index 0000000..8f9913a
+--- /dev/null
++++ b/backend/src/game/GuessManager.ts
+@@ -0,0 +1,123 @@
++// GuessManager: Anti-Cheat, Levenshtein Distance & Chat Classification Engine
++export type MessageClassification =
++  | 'DRAWER_CHEAT'
++  | 'CORRECT_GUESS'
++  | 'CLOSE_GUESS'
++  | 'ALREADY_GUESSED'
++  | 'REGULAR_CHAT';
++
++export interface EvaluationResult {
++  classification: MessageClassification;
++  cleanText: string;
++  levenshteinDistance?: number;
++  warning?: string;
++}
++
++export class GuessManager {
++  /**
++   * Normalizes input text: lowercases, trims whitespace, collapses multiple spaces.
++   */
++  public static normalize(text: string): string {
++    return text.trim().toLowerCase().replace(/\s+/g, ' ');
++  }
++
++  /**
++   * Calculates Levenshtein edit distance between two strings using dynamic programming.
++   * Time complexity: O(n * m), Space complexity: O(min(n, m)).
++   */
++  public static calculateLevenshteinDistance(a: string, b: string): number {
++    const s1 = a.toLowerCase();
++    const s2 = b.toLowerCase();
++
++    if (s1 === s2) return 0;
++    if (s1.length === 0) return s2.length;
++    if (s2.length === 0) return s1.length;
++
++    // Use two rows for space optimization
++    let prevRow = new Array(s2.length + 1);
++    let currRow = new Array(s2.length + 1);
++
++    for (let j = 0; j <= s2.length; j++) {
++      prevRow[j] = j;
++    }
++
++    for (let i = 1; i <= s1.length; i++) {
++      currRow[0] = i;
++      const char1 = s1.charAt(i - 1);
++
++      for (let j = 1; j <= s2.length; j++) {
++        const char2 = s2.charAt(j - 1);
++        const cost = char1 === char2 ? 0 : 1;
++
++        currRow[j] = Math.min(
++          prevRow[j] + 1,      // deletion
++          currRow[j - 1] + 1,  // insertion
++          prevRow[j - 1] + cost // substitution
++        );
++      }
++
++      // Copy currRow into prevRow for next iteration
++      for (let j = 0; j <= s2.length; j++) {
++        prevRow[j] = currRow[j];
++      }
++    }
++
++    return prevRow[s2.length];
++  }
++
++  /**
++   * Evaluates an incoming message against the secret word and player context.
++   */
++  public static evaluateMessage(
++    text: string,
++    secretWord: string | null,
++    isDrawer: boolean,
++    hasAlreadyGuessed: boolean
++  ): EvaluationResult {
++    const cleanText = this.normalize(text);
++
++    // If there is no active secret word (e.g. word picking phase), treat as regular chat
++    if (!secretWord) {
++      return { classification: 'REGULAR_CHAT', cleanText };
++    }
++
++    const cleanSecret = this.normalize(secretWord);
++
++    // 1. Drawer Anti-Cheat: Drawer cannot guess or type the secret word
++    if (isDrawer) {
++      if (cleanText === cleanSecret || (cleanSecret.length >= 3 && cleanText.includes(cleanSecret))) {
++        return {
++          classification: 'DRAWER_CHEAT',
++          cleanText,
++          warning: 'You are the drawer! You cannot type the secret word in chat.',
++        };
++      }
++      return { classification: 'REGULAR_CHAT', cleanText };
++    }
++
++    // 2. Already Guessed: Route message to post-guess channel (Option A - Skribbl.io authentic)
++    if (hasAlreadyGuessed) {
++      return { classification: 'ALREADY_GUESSED', cleanText };
++    }
++
++    // 3. Exact Match (Correct Guess)
++    if (cleanText === cleanSecret) {
++      return { classification: 'CORRECT_GUESS', cleanText };
++    }
++
++    // 4. Fuzzy Matching: "You're close!" (Levenshtein distance <= 1 for words >= 4 letters)
++    if (cleanSecret.length >= 4) {
++      const dist = this.calculateLevenshteinDistance(cleanText, cleanSecret);
++      if (dist === 1) {
++        return {
++          classification: 'CLOSE_GUESS',
++          cleanText,
++          levenshteinDistance: dist,
++        };
++      }
++    }
++
++    // 5. Regular chat / incorrect guess
++    return { classification: 'REGULAR_CHAT', cleanText };
++  }
++}
+diff --git a/backend/src/game/TurnManager.ts b/backend/src/game/TurnManager.ts
+index b6784ba..1fd045f 100644
+--- a/backend/src/game/TurnManager.ts
++++ b/backend/src/game/TurnManager.ts
+@@ -33,11 +33,13 @@ export class TurnManager {
+   public secretWord: string | null;
+   public currentMask: string[];
+   public revealedIndices: number[];
++  public guessedPlayerIds: Set<string>;
+ 
+   private selectionTimeout: NodeJS.Timeout | null = null;
+   private turnInterval: NodeJS.Timeout | null = null;
+   private hintTimeouts: NodeJS.Timeout[] = [];
+   public timeRemaining: number = 0;
++  private onTurnEndCallback: (() => void) | null = null;
+ 
+   constructor(room: Room, sessionId: string) {
+     this.room = room;
+@@ -51,6 +53,7 @@ export class TurnManager {
+     this.secretWord = null;
+     this.currentMask = [];
+     this.revealedIndices = [];
++    this.guessedPlayerIds = new Set();
+ 
+     this.resetDrawerQueue();
+   }
+@@ -92,6 +95,7 @@ export class TurnManager {
+     this.secretWord = null;
+     this.currentMask = [];
+     this.revealedIndices = [];
++    this.guessedPlayerIds.clear();
+ 
+     // Fetch randomized word options
+     const optionsCount = this.room.settings.wordOptionsCount || 3;
+@@ -120,7 +124,9 @@ export class TurnManager {
+     this.secretWord = chosenWord.trim().toUpperCase();
+     this.currentMask = HintManager.createInitialMask(this.secretWord);
+     this.revealedIndices = [];
++    this.guessedPlayerIds.clear();
+     this.turnPhase = 'DRAWING';
++    this.onTurnEndCallback = onTurnEnd;
+ 
+     const drawTime = this.room.settings.drawTimeSeconds || 80;
+     this.timeRemaining = drawTime;
+@@ -195,6 +201,27 @@ export class TurnManager {
+     };
+   }
+ 
++  public markPlayerGuessed(playerId: string): { isAllGuessed: boolean; guessOrder: number } {
++    this.guessedPlayerIds.add(playerId);
++    const guessOrder = this.guessedPlayerIds.size;
++    const totalGuessers = Math.max(1, this.room.players.size - 1);
++    const isAllGuessed = this.guessedPlayerIds.size >= totalGuessers;
++    return { isAllGuessed, guessOrder };
++  }
++
++  public hasPlayerGuessed(playerId: string): boolean {
++    return this.guessedPlayerIds.has(playerId);
++  }
++
++  public endTurnEarly(reason: string = 'ALL_GUESSED'): void {
++    if (this.turnPhase !== 'DRAWING') return;
++    this.clearAllTimers();
++    this.turnPhase = 'TURN_END';
++    if (this.onTurnEndCallback) {
++      this.onTurnEndCallback();
++    }
++  }
++
+   public clearAllTimers(): void {
+     if (this.selectionTimeout) {
+       clearTimeout(this.selectionTimeout);
+diff --git a/backend/src/sockets/chatHandler.ts b/backend/src/sockets/chatHandler.ts
+new file mode 100644
+index 0000000..3efa6c4
+--- /dev/null
++++ b/backend/src/sockets/chatHandler.ts
+@@ -0,0 +1,209 @@
++import { Server as SocketIOServer, Socket } from 'socket.io';
++import { RoomManager } from '../game/RoomManager.js';
++import { GuessManager } from '../game/GuessManager.js';
++import crypto from 'crypto';
++
++export type ChatMessageType =
++  | 'CHAT'
++  | 'SYSTEM'
++  | 'SUCCESS'
++  | 'SELF_SUCCESS'
++  | 'CLOSE_HINT'
++  | 'GUESSED_CHAT'
++  | 'WARNING';
++
++export interface ChatMessageDTO {
++  id: string;
++  senderId: string;
++  senderName: string;
++  text: string;
++  type: ChatMessageType;
++  timestamp: number;
++}
++
++/**
++ * Registers real-time chat, guess verification, anti-cheat, and fuzzy matching handlers.
++ */
++export function registerChatHandlers(io: SocketIOServer, socket: Socket) {
++  const roomManager = RoomManager.getInstance();
++
++  socket.on(
++    'send_chat_message',
++    (data: { roomId: string; text: string }, callback?: (res: { success: boolean; error?: string }) => void) => {
++      if (!data || !data.roomId || !data.text || typeof data.text !== 'string') {
++        if (callback) callback({ success: false, error: 'Invalid message payload' });
++        return;
++      }
++
++      const text = data.text.trim();
++      if (text.length === 0 || text.length > 150) {
++        if (callback) callback({ success: false, error: 'Message must be between 1 and 150 characters' });
++        return;
++      }
++
++      const room = roomManager.getRoom(data.roomId);
++      if (!room) {
++        if (callback) callback({ success: false, error: 'Room not found' });
++        return;
++      }
++
++      const player = room.getPlayerBySocket(socket.id);
++      if (!player) {
++        if (callback) callback({ success: false, error: 'Player not recognized in room' });
++        return;
++      }
++
++      const turnManager = roomManager.getTurnManager(room.id);
++      const isDrawer = room.currentDrawerId === player.id;
++      const hasAlreadyGuessed = turnManager ? turnManager.hasPlayerGuessed(player.id) : false;
++      const secretWord =
++        turnManager && turnManager.turnPhase === 'DRAWING' ? turnManager.secretWord : null;
++
++      // Evaluate message against game rules
++      const evalResult = GuessManager.evaluateMessage(
++        text,
++        secretWord,
++        isDrawer,
++        hasAlreadyGuessed
++      );
++
++      const msgId = crypto.randomUUID();
++      const now = Date.now();
++
++      switch (evalResult.classification) {
++        case 'DRAWER_CHEAT': {
++          // Drawer attempted to type the secret word in chat
++          socket.emit('drawer_cheat_warning', {
++            warning: evalResult.warning || 'You cannot type the secret word!',
++          });
++          socket.emit('chat_message', {
++            id: msgId,
++            senderId: 'system',
++            senderName: 'System',
++            text: `⚠️ ${evalResult.warning || 'You cannot type the secret word!'}`,
++            type: 'WARNING',
++            timestamp: now,
++          });
++          if (callback) callback({ success: false, error: evalResult.warning });
++          return;
++        }
++
++        case 'CORRECT_GUESS': {
++          // Guesser solved the secret word!
++          if (!turnManager) return;
++
++          const { isAllGuessed, guessOrder } = turnManager.markPlayerGuessed(player.id);
++
++          // 1. Send success event to room
++          io.to(room.id).emit('player_guessed_correct', {
++            roomId: room.id,
++            playerId: player.id,
++            playerName: player.name,
++            guessOrder,
++          });
++
++          // 2. Broadcast green celebration banner to room (hiding exact word)
++          io.to(room.id).emit('chat_message', {
++            id: msgId,
++            senderId: 'system',
++            senderName: 'System',
++            text: `${player.name} guessed the word!`,
++            type: 'SUCCESS',
++            timestamp: now,
++          });
++
++          // 3. Send private celebration to the solver
++          socket.emit('chat_message', {
++            id: crypto.randomUUID(),
++            senderId: 'system',
++            senderName: 'System',
++            text: `🎉 You guessed the word!`,
++            type: 'SELF_SUCCESS',
++            timestamp: now,
++          });
++
++          if (callback) callback({ success: true });
++
++          // 4. Early turn termination if all eligible guessers have solved
++          if (isAllGuessed) {
++            console.log(`[TurnManager] All players in room ${room.id} have guessed the word! Ending turn early.`);
++            turnManager.endTurnEarly('ALL_GUESSED');
++          }
++          return;
++        }
++
++        case 'CLOSE_GUESS': {
++          // Broadcast normal wrong guess to the room
++          io.to(room.id).emit('chat_message', {
++            id: msgId,
++            senderId: player.id,
++            senderName: player.name,
++            text,
++            type: 'CHAT',
++            timestamp: now,
++          });
++
++          // Send private "You're close!" alert only to this player
++          socket.emit('close_guess', { text: "You're close!" });
++          socket.emit('chat_message', {
++            id: crypto.randomUUID(),
++            senderId: 'system',
++            senderName: 'System',
++            text: `⚠️ You're close!`,
++            type: 'CLOSE_HINT',
++            timestamp: now,
++          });
++
++          if (callback) callback({ success: true });
++          return;
++        }
++
++        case 'ALREADY_GUESSED': {
++          // Option A: Message is broadcast exclusively to players who have already guessed + drawer
++          const chatMsg: ChatMessageDTO = {
++            id: msgId,
++            senderId: player.id,
++            senderName: player.name,
++            text,
++            type: 'GUESSED_CHAT',
++            timestamp: now,
++          };
++
++          if (turnManager) {
++            // Emit to each guessed player's socket
++            for (const guessedId of turnManager.guessedPlayerIds) {
++              const p = room.getPlayer(guessedId);
++              if (p) io.to(p.socketId).emit('chat_message', chatMsg);
++            }
++            // Also emit to the active drawer
++            if (turnManager.currentDrawerId) {
++              const drawer = room.getPlayer(turnManager.currentDrawerId);
++              if (drawer) io.to(drawer.socketId).emit('chat_message', chatMsg);
++            }
++          } else {
++            socket.emit('chat_message', chatMsg);
++          }
++
++          if (callback) callback({ success: true });
++          return;
++        }
++
++        case 'REGULAR_CHAT':
++        default: {
++          // Standard chat / wrong guess broadcast to room
++          io.to(room.id).emit('chat_message', {
++            id: msgId,
++            senderId: player.id,
++            senderName: player.name,
++            text,
++            type: 'CHAT',
++            timestamp: now,
++          });
++
++          if (callback) callback({ success: true });
++          return;
++        }
++      }
++    }
++  );
++}
+diff --git a/backend/src/sockets/index.ts b/backend/src/sockets/index.ts
+index e26ac1e..5a44b5f 100644
+--- a/backend/src/sockets/index.ts
++++ b/backend/src/sockets/index.ts
+@@ -3,6 +3,7 @@ import { Server as HTTPServer } from 'http';
+ import { registerRoomHandlers } from './roomHandler.js';
+ import { registerDrawingHandlers } from './drawingHandler.js';
+ import { registerGameHandlers } from './gameHandler.js';
++import { registerChatHandlers } from './chatHandler.js';
+ 
+ /**
+  * Initializes and configures the Socket.IO server.
+@@ -32,6 +33,7 @@ export function initializeSockets(httpServer: HTTPServer, allowedOrigin: string)
+     registerRoomHandlers(io, socket);
+     registerDrawingHandlers(io, socket);
+     registerGameHandlers(io, socket);
++    registerChatHandlers(io, socket);
+ 
+     // Test ping-pong roundtrip event for latency and connectivity verification
+     socket.on('ping_test', (data, callback) => {
+diff --git a/backend/tests/chat_engine.test.js b/backend/tests/chat_engine.test.js
+new file mode 100644
+index 0000000..d68be7b
+--- /dev/null
++++ b/backend/tests/chat_engine.test.js
+@@ -0,0 +1,227 @@
++// Automated Multi-Client Integration Test: Real-Time Chat & Guess Verification Engine
++const { io } = require('../../frontend/node_modules/socket.io-client');
++const assert = require('assert');
++const { GuessManager } = require('../dist/game/GuessManager.js');
++
++const SOCKET_URL = 'http://localhost:5000';
++
++console.log('=== Phase 7 Real-Time Chat & Guess Verification Test Suite ===\n');
++
++// --- 1. Unit Tests for GuessManager ---
++console.log('--- Test 1: GuessManager String Normalization & Levenshtein Distance ---');
++assert.strictEqual(GuessManager.normalize('  HeLLo   WoRLD  '), 'hello world');
++assert.strictEqual(GuessManager.calculateLevenshteinDistance('pizza', 'piza'), 1);
++assert.strictEqual(GuessManager.calculateLevenshteinDistance('apple', 'aple'), 1);
++assert.strictEqual(GuessManager.calculateLevenshteinDistance('banana', 'banana'), 0);
++assert.strictEqual(GuessManager.calculateLevenshteinDistance('cat', 'dog'), 3);
++console.log('✅ Levenshtein distance calculations verified (pizza vs piza = 1, apple vs aple = 1)');
++
++// Classification logic
++const secret = 'PIZZA';
++assert.strictEqual(GuessManager.evaluateMessage('pizza', secret, true, false).classification, 'DRAWER_CHEAT');
++assert.strictEqual(GuessManager.evaluateMessage('hello', secret, true, false).classification, 'REGULAR_CHAT');
++assert.strictEqual(GuessManager.evaluateMessage('pizza', secret, false, false).classification, 'CORRECT_GUESS');
++assert.strictEqual(GuessManager.evaluateMessage('  Pizza  ', secret, false, false).classification, 'CORRECT_GUESS');
++assert.strictEqual(GuessManager.evaluateMessage('piza', secret, false, false).classification, 'CLOSE_GUESS');
++assert.strictEqual(GuessManager.evaluateMessage('burger', secret, false, false).classification, 'REGULAR_CHAT');
++assert.strictEqual(GuessManager.evaluateMessage('nice!', secret, false, true).classification, 'ALREADY_GUESSED');
++console.log('✅ GuessManager classification matrix verified across all 5 conditions');
++
++// --- 2. Multi-Client Socket Real-Time Flow ---
++console.log('\n--- Test 2: Multi-Client Real-Time Chat, Anti-Cheat & Guess Routing ---');
++const aliceSocket = io(SOCKET_URL, { reconnection: false });
++let bobSocket = null;
++let charlieSocket = null;
++
++let roomId = null;
++let alicePlayerId = null;
++let bobPlayerId = null;
++let charliePlayerId = null;
++
++aliceSocket.on('connect', () => {
++  console.log('Alice (Host/Drawer) connected:', aliceSocket.id);
++
++  aliceSocket.emit('create_room', {
++    hostName: 'AliceDrawer',
++    avatarId: 'skribbl_0_0_0',
++    settings: { maxPlayers: 4, totalRounds: 2, drawTimeSeconds: 6, wordOptionsCount: 3, hintsAllowed: 2 },
++  }, (createRes) => {
++    assert.strictEqual(createRes.success, true);
++    roomId = createRes.room.id;
++    alicePlayerId = createRes.player.id;
++    console.log(`✅ Step 1: Alice created room ${roomId}`);
++
++    bobSocket = io(SOCKET_URL, { reconnection: false });
++    bobSocket.on('connect', () => {
++      console.log('Bob (Guesser 1) connected:', bobSocket.id);
++
++      bobSocket.emit('join_room', {
++        roomId,
++        playerName: 'BobGuesser',
++        avatarId: 'skribbl_1_1_1',
++      }, (joinBobRes) => {
++        assert.strictEqual(joinBobRes.success, true);
++        bobPlayerId = joinBobRes.player.id;
++        console.log(`✅ Step 2: Bob joined room ${roomId}`);
++
++        charlieSocket = io(SOCKET_URL, { reconnection: false });
++        charlieSocket.on('connect', () => {
++          console.log('Charlie (Guesser 2) connected:', charlieSocket.id);
++
++          charlieSocket.emit('join_room', {
++            roomId,
++            playerName: 'CharlieGuesser',
++            avatarId: 'skribbl_2_2_2',
++          }, (joinCharlieRes) => {
++            assert.strictEqual(joinCharlieRes.success, true);
++            charliePlayerId = joinCharlieRes.player.id;
++            console.log(`✅ Step 3: Charlie joined room ${roomId}`);
++
++            // Start game
++            setupGameListeners();
++            aliceSocket.emit('start_game', { roomId });
++          });
++        });
++      });
++    });
++  });
++});
++
++function setupGameListeners() {
++  // Alice word selection
++  aliceSocket.on('word_selection_start', (data) => {
++    console.log('✅ Step 4: Alice received word options. Selecting "pizza"...');
++    aliceSocket.emit('select_word', { roomId, word: 'pizza' });
++  });
++
++  // Turn start
++  bobSocket.on('turn_start', (data) => {
++    assert.strictEqual(data.role, 'GUESSER');
++    assert.strictEqual(data.wordMask, '_ _ _ _ _');
++    console.log('✅ Step 5: Turn started! Secret word is masked.');
++
++    // Execute Test Steps sequentially:
++    runTestSteps();
++  });
++}
++
++function runTestSteps() {
++  // 1. Drawer Alice attempts anti-cheat violation (typing "pizza" in chat)
++  console.log('\n--- Action A: Drawer Alice attempts to type secret word in chat ---');
++  let charlieSawCheat = false;
++  charlieSocket.on('chat_message', (msg) => {
++    if (msg.text && msg.text.toLowerCase().includes('pizza') && msg.senderId === alicePlayerId) {
++      charlieSawCheat = true;
++    }
++  });
++
++  aliceSocket.on('drawer_cheat_warning', (warn) => {
++    console.log('✅ Action A Success: Server blocked Drawer typing secret word and sent private warning:', warn.warning);
++  });
++
++  aliceSocket.emit('send_chat_message', { roomId, text: 'The word is pizza' }, (ack) => {
++    assert.strictEqual(ack.success, false);
++    assert.strictEqual(charlieSawCheat, false, 'Charlie must NEVER see Drawer secret word chat!');
++
++    // 2. Bob sends normal wrong guess
++    setTimeout(() => {
++      console.log('\n--- Action B: Bob sends regular incorrect guess ("burger") ---');
++      let charlieSawBurger = false;
++      const onCharlieBurger = (msg) => {
++        if (msg.text === 'burger' && msg.senderId === bobPlayerId) {
++          charlieSawBurger = true;
++          console.log('✅ Action B Success: Regular wrong guess broadcast to room as CHAT:', msg.text);
++          charlieSocket.off('chat_message', onCharlieBurger);
++          stepC();
++        }
++      };
++      charlieSocket.on('chat_message', onCharlieBurger);
++      bobSocket.emit('send_chat_message', { roomId, text: 'burger' });
++    }, 200);
++  });
++}
++
++function stepC() {
++  // 3. Charlie sends close guess "piza"
++  console.log('\n--- Action C: Charlie sends close guess ("piza") ---');
++  let charlieGotCloseAlert = false;
++  charlieSocket.once('close_guess', (data) => {
++    charlieGotCloseAlert = true;
++    assert.strictEqual(data.text, "You're close!");
++    console.log('✅ Action C Success: Charlie received exclusive private "You\'re close!" notification!');
++    stepD();
++  });
++
++  charlieSocket.emit('send_chat_message', { roomId, text: 'piza' });
++}
++
++function stepD() {
++  // 4. Bob sends correct guess "pizza"
++  console.log('\n--- Action D: Bob sends correct guess ("pizza") ---');
++  let bobCelebrationReceived = false;
++  let charlieSawPizzaPlaintext = false;
++
++  const onCharlieMsg = (msg) => {
++    if (msg.type === 'CHAT' && msg.text && msg.text.toLowerCase() === 'pizza') {
++      charlieSawPizzaPlaintext = true;
++    }
++  };
++  charlieSocket.on('chat_message', onCharlieMsg);
++
++  charlieSocket.once('player_guessed_correct', (data) => {
++    assert.strictEqual(data.playerId, bobPlayerId);
++    assert.strictEqual(data.guessOrder, 1);
++    console.log(`✅ Action D Success: player_guessed_correct event received for ${data.playerName} (Order #1)!`);
++    assert.strictEqual(charlieSawPizzaPlaintext, false, 'Raw guess "pizza" must NOT be visible to Charlie!');
++    charlieSocket.off('chat_message', onCharlieMsg);
++    stepE();
++  });
++
++  bobSocket.emit('send_chat_message', { roomId, text: 'pizza' });
++}
++
++function stepE() {
++  // 5. Bob (already guessed) chats "good drawing" -> Only Alice (Drawer) and Bob see it, Charlie doesn't!
++  console.log('\n--- Action E: Bob (in solver club) chats "good drawing" (Option A isolation) ---');
++  let charlieSawSolverChat = false;
++  const onCharlieSolverCheck = (msg) => {
++    if (msg.text === 'good drawing') {
++      charlieSawSolverChat = true;
++    }
++  };
++  charlieSocket.on('chat_message', onCharlieSolverCheck);
++
++  const onAliceSolverMsg = (msg) => {
++    if (msg.text === 'good drawing') {
++      assert.strictEqual(msg.type, 'GUESSED_CHAT');
++      console.log('✅ Action E Success: Drawer Alice received solver chat with [GUESSED_CHAT] badge!');
++      assert.strictEqual(charlieSawSolverChat, false, 'Charlie must NOT receive solver chat before guessing!');
++      aliceSocket.off('chat_message', onAliceSolverMsg);
++      charlieSocket.off('chat_message', onCharlieSolverCheck);
++      stepF();
++    }
++  };
++  aliceSocket.on('chat_message', onAliceSolverMsg);
++
++  bobSocket.emit('send_chat_message', { roomId, text: 'good drawing' });
++}
++
++function stepF() {
++  // 6. Charlie sends correct guess -> All guessers finished -> Early turn end
++  console.log('\n--- Action F: Charlie solves word -> All guessers finished -> Early turn end ---');
++  const turnStartTime = Date.now();
++
++  aliceSocket.once('turn_end', (endData) => {
++    const elapsedMs = Date.now() - turnStartTime;
++    assert.strictEqual(endData.secretWord, 'PIZZA');
++    console.log(`✅ Action F Success: Turn ended early (${elapsedMs}ms) because all guessers solved!`);
++
++    console.log('\n🎉 ALL PHASE 7 REAL-TIME CHAT & GUESS VERIFICATION TESTS PASSED!');
++    aliceSocket.disconnect();
++    bobSocket.disconnect();
++    charlieSocket.disconnect();
++    process.exit(0);
++  });
++
++  charlieSocket.emit('send_chat_message', { roomId, text: 'pizza' });
++}
+diff --git a/docs/features/07-chat-and-guess-verification.md b/docs/features/07-chat-and-guess-verification.md
+new file mode 100644
+index 0000000..a002811
+--- /dev/null
++++ b/docs/features/07-chat-and-guess-verification.md
+@@ -0,0 +1,129 @@
++# Feature 07: Real-Time Chat & Guess Verification Engine
++
++This document details the complete design, network protocols, server authority security, code implementation, testing, and interview defense for Phase 7: **Real-Time Chat & Guess Verification Engine**.
++
++---
++
++## 1. Feature Overview
++Phase 7 implements the core real-time guessing loop, anti-cheat protection, fuzzy string matching, and dual-mode chat routing that powers Skribbl.io:
++1. **Unified Chat & Guess Input:** Following authentic Skribbl.io design, players do not juggle between separate "Chat" and "Guess" tabs. A single input field at the bottom of the chat panel dynamically classifies and processes all messages.
++2. **Zero-Trust Guess Verification (`GuessManager.ts`):** 
++   - When a guesser submits the secret word (e.g. `PIZZA`, `  pizza  `, `Pizza`), the server matches it case-insensitively.
++   - **Crucial Anti-Cheat:** The raw guess text `"pizza"` is **never broadcast** to other players in the room. Instead, the server marks the player as a solver and broadcasts a celebration banner: `🎉 [Player] guessed the word!`.
++3. **Fuzzy Matching / "You're close!" System:**
++   - Evaluates non-matching guesses with dynamic programming Levenshtein edit distance.
++   - If a word has $\ge 4$ characters and the guess has an edit distance of exactly $1$ (e.g. `piza` for `pizza` or `aple` for `apple`), the message is broadcast as a normal guess, but the server delivers an exclusive private alert: `⚠️ You're close!`.
++4. **Active Drawer Anti-Cheat Protection:**
++   - The drawer cannot guess their own secret word.
++   - If the drawer attempts to type the secret word into chat, the server **blocks the message** and emits a private warning: `⚠️ You are the drawer! You cannot type the secret word in chat.` Non-drawer players never see the message.
++5. **Option A Authentic Solver Chat Isolation (Dual-Mode):**
++   - Once a player has solved the word, any subsequent messages they send are tagged as `GUESSED_CHAT` and routed exclusively to other players who have also solved the word (plus the active drawer). Remaining guessers do not receive these messages, preventing verbal hints or spoilers.
++6. **Early Turn Termination:**
++   - If all eligible guessers solve the secret word before the turn timer expires, the server immediately triggers an early turn conclusion (`ALL_GUESSED`) without requiring players to wait out the remaining clock.
++7. **Frontend 3-Column Arena (`GameView.tsx`, `ChatBox.tsx`):**
++   - Roster (Left) $\vert$ Canvas & Toolbar (Center) $\vert$ ChatBox (Right).
++   - Solved players receive a vibrant green `✅ Guessed` badge in the roster list.
++
++---
++
++## 2. Requirements Mapping
++From [`docs/requirements-checklist.md`](file:///C:/Users/shub1/OneDrive/Desktop/Scribble/docs/requirements-checklist.md):
++- **REQ-MH-07:** Guessing system: players type guesses in chat, server verifies against word. *(Must Have — Page 2, 5)*
++- **REQ-SH-02:** Dual chat mode: guesses filtered from view if correct; general chat; notification broadcast. *(Should Have — Page 2, 4, 5)*
++- **WebSocket Protocol Events:**
++  - `send_chat_message` (Client ➔ Server)
++  - `chat_message` (Server ➔ Room / Solvers)
++  - `player_guessed_correct` (Server ➔ Room)
++  - `close_guess` (Server ➔ Sender socket)
++  - `drawer_cheat_warning` (Server ➔ Drawer socket)
++
++---
++
++## 3. Network Event Protocol & Payload Specifications
++
++| Event | Direction | Payload | Description |
++|---|---|---|---|
++| `send_chat_message` | Client ➔ Server | `{ roomId: string, text: string }` | Sends chat or guess attempt. |
++| `chat_message` | Server ➔ Room / Private | `{ id, senderId, senderName, text, type, timestamp }` | Broadcasts message with color-coded type (`CHAT`, `SUCCESS`, `SELF_SUCCESS`, `CLOSE_HINT`, `GUESSED_CHAT`, `WARNING`). |
++| `player_guessed_correct` | Server ➔ Room | `{ roomId: string, playerId: string, playerName: string, guessOrder: number }` | Signals that a player solved the secret word; triggers roster checkmark. |
++| `close_guess` | Server ➔ Guesser | `{ text: "You're close!" }` | Private socket alert for Levenshtein distance = 1. |
++| `drawer_cheat_warning` | Server ➔ Drawer | `{ warning: string }` | Private alert blocking drawer from revealing the word. |
++
++---
++
++## 4. Message Classification Matrix
++
++```mermaid
++flowchart TD
++    Msg["Incoming Message: send_chat_message"] --> CheckDrawer{"Is Player the Active Drawer?"}
++    
++    CheckDrawer -- Yes --> DrawerWord{"Does message match or include Secret Word?"}
++    DrawerWord -- Yes --> BlockDrawer["🚫 Block message & emit 'drawer_cheat_warning'"]
++    DrawerWord -- No --> BroadcastChat["Broadcast normal CHAT to room"]
++    
++    CheckDrawer -- No --> AlreadyGuessed{"Has Player Already Guessed?"}
++    AlreadyGuessed -- Yes --> GuesserChat["🔒 Route 'GUESSED_CHAT' strictly to fellow solvers & drawer"]
++    
++    AlreadyGuessed -- No --> ExactMatch{"Exact Match with Secret Word?<br/>(case-insensitive, trimmed)"}
++    ExactMatch -- Yes --> CorrectAction["🎉 Mark Player Guessed<br/>1. Drop raw guess text<br/>2. Broadcast 'SUCCESS' announcement to room<br/>3. Emit 'player_guessed_correct'<br/>4. If all solved: early turn end"]
++    
++    ExactMatch -- No --> CheckFuzzy{"Levenshtein Distance == 1?<br/>(Word length ≥ 4)"}
++    CheckFuzzy -- Yes --> CloseAction["Broadcast guess as CHAT +<br/>Send private 'close_guess' to sender"]
++    CheckFuzzy -- No --> BroadcastChat
++```
++
++---
++
++## 5. Levenshtein Distance Algorithm
++
++Implemented in `backend/src/game/GuessManager.ts`:
++Given string $s_1$ of length $m$ and string $s_2$ of length $n$:
++$$D[i, j] = \begin{cases} 
++\max(i, j) & \text{if } \min(i, j) = 0 \\
++\min \begin{cases} D[i-1, j] + 1 \\ D[i, j-1] + 1 \\ D[i-1, j-1] + \text{cost} \end{cases} & \text{otherwise}
++\end{cases}$$
++Where $\text{cost} = 0$ if $s_1[i-1] = s_2[j-1]$, else $1$.
++- **Space Optimization:** Uses two 1D rows (`prevRow`, `currRow`), reducing space complexity from $O(m \cdot n)$ to $O(\min(m, n))$.
++
++---
++
++## 6. Testing & Verification
++
++Automated multi-client integration test [`backend/tests/chat_engine.test.js`](file:///C:/Users/shub1/OneDrive/Desktop/Scribble/backend/tests/chat_engine.test.js) executed cleanly:
++```text
++=== Phase 7 Real-Time Chat & Guess Verification Test Suite ===
++
++--- Test 1: GuessManager String Normalization & Levenshtein Distance ---
++✅ Levenshtein distance calculations verified (pizza vs piza = 1, apple vs aple = 1)
++✅ GuessManager classification matrix verified across all 5 conditions
++
++--- Test 2: Multi-Client Real-Time Chat, Anti-Cheat & Guess Routing ---
++Alice (Host/Drawer) connected: hH7MhnbETWZfGCdnAAAH
++✅ Step 1: Alice created room JS6Q9D
++Bob (Guesser 1) connected: FdsuRc9XAmguhOzIAAAI
++✅ Step 2: Bob joined room JS6Q9D
++Charlie (Guesser 2) connected: OYq8xp2LEFiPtPmlAAAJ
++✅ Step 3: Charlie joined room JS6Q9D
++✅ Step 4: Alice received word options. Selecting "pizza"...
++✅ Step 5: Turn started! Secret word is masked.
++
++--- Action A: Drawer Alice attempts to type secret word in chat ---
++✅ Action A Success: Server blocked Drawer typing secret word and sent private warning: You are the drawer! You cannot type the secret word in chat.
++
++--- Action B: Bob sends regular incorrect guess ("burger") ---
++✅ Action B Success: Regular wrong guess broadcast to room as CHAT: burger
++
++--- Action C: Charlie sends close guess ("piza") ---
++✅ Action C Success: Charlie received exclusive private "You're close!" notification!
++
++--- Action D: Bob sends correct guess ("pizza") ---
++✅ Action D Success: player_guessed_correct event received for BobGuesser (Order #1)!
++
++--- Action E: Bob (in solver club) chats "good drawing" (Option A isolation) ---
++✅ Action E Success: Drawer Alice received solver chat with [GUESSED_CHAT] badge!
++
++--- Action F: Charlie solves word -> All guessers finished -> Early turn end ---
++✅ Action F Success: Turn ended early (1ms) because all guessers solved!
++
++🎉 ALL PHASE 7 REAL-TIME CHAT & GUESS VERIFICATION TESTS PASSED!
++```
+diff --git a/frontend/src/components/ChatBox.tsx b/frontend/src/components/ChatBox.tsx
+new file mode 100644
+index 0000000..acc5920
+--- /dev/null
++++ b/frontend/src/components/ChatBox.tsx
+@@ -0,0 +1,313 @@
++import React, { useState, useRef, useEffect } from 'react';
++import { Send, MessageSquare, CheckCircle2, Sparkles, AlertTriangle } from 'lucide-react';
++import { ChatMessage } from '../types/game';
++
++interface ChatBoxProps {
++  messages: ChatMessage[];
++  onSendMessage: (text: string) => void;
++  isDrawer: boolean;
++  hasGuessed: boolean;
++  isDrawingPhase: boolean;
++}
++
++export const ChatBox: React.FC<ChatBoxProps> = ({
++  messages,
++  onSendMessage,
++  isDrawer,
++  hasGuessed,
++  isDrawingPhase,
++}) => {
++  const [inputText, setInputText] = useState('');
++  const messagesEndRef = useRef<HTMLDivElement>(null);
++
++  // Auto-scroll to latest message
++  useEffect(() => {
++    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
++  }, [messages]);
++
++  const handleSubmit = (e: React.FormEvent) => {
++    e.preventDefault();
++    const trimmed = inputText.trim();
++    if (!trimmed) return;
++    onSendMessage(trimmed);
++    setInputText('');
++  };
++
++  // Determine placeholder context
++  let placeholder = 'Type your guess here...';
++  if (isDrawer && isDrawingPhase) {
++    placeholder = 'You are drawing! Chat with players...';
++  } else if (hasGuessed && isDrawingPhase) {
++    placeholder = 'Chat with other guessers...';
++  }
++
++  return (
++    <div
++      style={{
++        display: 'flex',
++        flexDirection: 'column',
++        width: '100%',
++        height: '100%',
++        minHeight: '440px',
++        backgroundColor: '#ffffff',
++        borderRadius: '16px',
++        border: '3px solid #1e293b',
++        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1)',
++        overflow: 'hidden',
++      }}
++    >
++      {/* Header */}
++      <div
++        style={{
++          display: 'flex',
++          alignItems: 'center',
++          justifyContent: 'space-between',
++          padding: '0.65rem 1rem',
++          backgroundColor: '#0284c7',
++          color: '#ffffff',
++          fontWeight: 800,
++          fontSize: '0.95rem',
++          letterSpacing: '0.025em',
++          borderBottom: '2px solid #0369a1',
++        }}
++      >
++        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
++          <MessageSquare size={18} />
++          <span>Game Chat</span>
++        </div>
++        {hasGuessed && isDrawingPhase && (
++          <span
++            style={{
++              fontSize: '0.75rem',
++              backgroundColor: '#10b981',
++              padding: '0.15rem 0.5rem',
++              borderRadius: '999px',
++              display: 'flex',
++              alignItems: 'center',
++              gap: '0.25rem',
++            }}
++          >
++            <CheckCircle2 size={13} /> Guessed
++          </span>
++        )}
++      </div>
++
++      {/* Message Stream */}
++      <div
++        style={{
++          flex: 1,
++          overflowY: 'auto',
++          padding: '0.75rem',
++          display: 'flex',
++          flexDirection: 'column',
++          gap: '0.45rem',
++          backgroundColor: '#f8fafc',
++          maxHeight: '420px',
++        }}
++      >
++        {messages.length === 0 ? (
++          <div
++            style={{
++              textAlign: 'center',
++              color: '#94a3b8',
++              fontSize: '0.85rem',
++              margin: 'auto 0',
++              fontStyle: 'italic',
++            }}
++          >
++            Match chat started! Guesses will appear here.
++          </div>
++        ) : (
++          messages.map((msg) => {
++            if (msg.type === 'SUCCESS') {
++              return (
++                <div
++                  key={msg.id}
++                  style={{
++                    backgroundColor: '#d1fae5',
++                    color: '#065f46',
++                    fontWeight: 700,
++                    padding: '0.4rem 0.75rem',
++                    borderRadius: '8px',
++                    fontSize: '0.85rem',
++                    borderLeft: '4px solid #10b981',
++                    display: 'flex',
++                    alignItems: 'center',
++                    gap: '0.4rem',
++                  }}
++                >
++                  <Sparkles size={15} color="#059669" />
++                  <span>{msg.text}</span>
++                </div>
++              );
++            }
++
++            if (msg.type === 'SELF_SUCCESS') {
++              return (
++                <div
++                  key={msg.id}
++                  style={{
++                    backgroundColor: '#10b981',
++                    color: '#ffffff',
++                    fontWeight: 800,
++                    padding: '0.5rem 0.75rem',
++                    borderRadius: '8px',
++                    fontSize: '0.9rem',
++                    textAlign: 'center',
++                    boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)',
++                  }}
++                >
++                  {msg.text}
++                </div>
++              );
++            }
++
++            if (msg.type === 'CLOSE_HINT') {
++              return (
++                <div
++                  key={msg.id}
++                  style={{
++                    backgroundColor: '#fef3c7',
++                    color: '#92400e',
++                    fontWeight: 700,
++                    padding: '0.4rem 0.75rem',
++                    borderRadius: '8px',
++                    fontSize: '0.85rem',
++                    borderLeft: '4px solid #f59e0b',
++                    display: 'flex',
++                    alignItems: 'center',
++                    gap: '0.4rem',
++                  }}
++                >
++                  <AlertTriangle size={15} color="#d97706" />
++                  <span>{msg.text}</span>
++                </div>
++              );
++            }
++
++            if (msg.type === 'WARNING') {
++              return (
++                <div
++                  key={msg.id}
++                  style={{
++                    backgroundColor: '#fee2e2',
++                    color: '#991b1b',
++                    fontWeight: 700,
++                    padding: '0.4rem 0.75rem',
++                    borderRadius: '8px',
++                    fontSize: '0.85rem',
++                    borderLeft: '4px solid #ef4444',
++                  }}
++                >
++                  {msg.text}
++                </div>
++              );
++            }
++
++            if (msg.type === 'GUESSED_CHAT') {
++              return (
++                <div
++                  key={msg.id}
++                  style={{
++                    backgroundColor: '#ecfdf5',
++                    color: '#064e3b',
++                    padding: '0.35rem 0.65rem',
++                    borderRadius: '8px',
++                    fontSize: '0.875rem',
++                    wordBreak: 'break-word',
++                    border: '1px solid #a7f3d0',
++                  }}
++                >
++                  <span
++                    style={{
++                      fontSize: '0.72rem',
++                      backgroundColor: '#10b981',
++                      color: '#ffffff',
++                      padding: '0.1rem 0.35rem',
++                      borderRadius: '4px',
++                      fontWeight: 700,
++                      marginRight: '0.4rem',
++                    }}
++                  >
++                    SOLVER
++                  </span>
++                  <span style={{ fontWeight: 800, color: '#047857' }}>{msg.senderName}: </span>
++                  <span>{msg.text}</span>
++                </div>
++              );
++            }
++
++            // Normal CHAT or SYSTEM
++            return (
++              <div
++                key={msg.id}
++                style={{
++                  backgroundColor: '#ffffff',
++                  color: '#1e293b',
++                  padding: '0.35rem 0.65rem',
++                  borderRadius: '8px',
++                  fontSize: '0.875rem',
++                  wordBreak: 'break-word',
++                  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
++                  border: '1px solid #e2e8f0',
++                }}
++              >
++                <span style={{ fontWeight: 800, color: '#2563eb' }}>{msg.senderName}: </span>
++                <span>{msg.text}</span>
++              </div>
++            );
++          })
++        )}
++        <div ref={messagesEndRef} />
++      </div>
++
++      {/* Input Field */}
++      <form
++        onSubmit={handleSubmit}
++        style={{
++          display: 'flex',
++          gap: '0.5rem',
++          padding: '0.65rem 0.75rem',
++          backgroundColor: '#ffffff',
++          borderTop: '2px solid #e2e8f0',
++        }}
++      >
++        <input
++          type="text"
++          value={inputText}
++          onChange={(e) => setInputText(e.target.value)}
++          placeholder={placeholder}
++          maxLength={120}
++          style={{
++            flex: 1,
++            padding: '0.55rem 0.85rem',
++            borderRadius: '10px',
++            border: '2px solid #cbd5e1',
++            fontSize: '0.875rem',
++            outline: 'none',
++            fontWeight: 600,
++            color: '#1e293b',
++          }}
++        />
++        <button
++          type="submit"
++          disabled={!inputText.trim()}
++          style={{
++            display: 'flex',
++            alignItems: 'center',
++            justifyContent: 'center',
++            padding: '0.55rem 0.95rem',
++            borderRadius: '10px',
++            backgroundColor: inputText.trim() ? '#0284c7' : '#94a3b8',
++            color: '#ffffff',
++            border: 'none',
++            cursor: inputText.trim() ? 'pointer' : 'not-allowed',
++            transition: 'background-color 0.15s',
++          }}
++        >
++          <Send size={16} />
++        </button>
++      </form>
++    </div>
++  );
++};
+diff --git a/frontend/src/pages/GameView.tsx b/frontend/src/pages/GameView.tsx
+index 7e481ee..f7c2613 100644
+--- a/frontend/src/pages/GameView.tsx
++++ b/frontend/src/pages/GameView.tsx
+@@ -1,13 +1,14 @@
+ import React, { useState, useEffect } from 'react';
+ import { socket } from '../services/socket';
+-import { RoomDTO, PlayerDTO, GameSessionDTO, RemoteDrawStartPayload, RemoteDrawMovePayload, RemoteDrawEndPayload } from '../types/game';
++import { RoomDTO, PlayerDTO, GameSessionDTO, RemoteDrawStartPayload, RemoteDrawMovePayload, RemoteDrawEndPayload, ChatMessage, PlayerGuessedPayload } from '../types/game';
+ import { useCanvas } from '../hooks/useCanvas';
+ import { Canvas } from '../components/Canvas';
+ import { CanvasToolbar } from '../components/CanvasToolbar';
+ import { SkribblAvatar } from '../components/SkribblAvatar';
+ import { WordPickerModal, WordChoice } from '../components/WordPickerModal';
+ import { WordMaskBar } from '../components/WordMaskBar';
+-import { LogOut, Pencil, Eye, Trophy, Sparkles } from 'lucide-react';
++import { ChatBox } from '../components/ChatBox';
++import { LogOut, Pencil, Eye, Trophy, Sparkles, CheckCircle2 } from 'lucide-react';
+ 
+ interface GameViewProps {
+   room: RoomDTO;
+@@ -42,6 +43,10 @@ export const GameView: React.FC<GameViewProps> = ({
+   const [timeRemaining, setTimeRemaining] = useState<number>(room.settings.drawTimeSeconds || 80);
+   const [turnEndedWord, setTurnEndedWord] = useState<string | null>(null);
+ 
++  // Chat & Guessing State
++  const [messages, setMessages] = useState<ChatMessage[]>([]);
++  const [guessedPlayerIds, setGuessedPlayerIds] = useState<Set<string>>(new Set());
++
+   // Is current client the designated drawer?
+   const isDrawer = currentPlayer.id === currentDrawerId;
+   const drawerPlayer = players.find((p) => p.id === currentDrawerId) || players[0];
+@@ -95,6 +100,10 @@ export const GameView: React.FC<GameViewProps> = ({
+     setShowWordPicker(false);
+   };
+ 
++  const handleSendMessage = (text: string) => {
++    socket.emit('send_chat_message', { roomId: room.id, text });
++  };
++
+   // Socket listener setup for remote spectators and turn transitions
+   useEffect(() => {
+     // 1. Initial hydration request for current round's drawing
+@@ -146,6 +155,7 @@ export const GameView: React.FC<GameViewProps> = ({
+       setShowWordPicker(true);
+       setDrawerChoosingBanner(null);
+       setTurnEndedWord(null);
++      setGuessedPlayerIds(new Set());
+       handleClear();
+     };
+ 
+@@ -154,6 +164,7 @@ export const GameView: React.FC<GameViewProps> = ({
+       setDrawerChoosingBanner(`${data.drawerName} is choosing a word...`);
+       setShowWordPicker(false);
+       setTurnEndedWord(null);
++      setGuessedPlayerIds(new Set());
+       handleClear();
+     };
+ 
+@@ -172,6 +183,7 @@ export const GameView: React.FC<GameViewProps> = ({
+       setShowWordPicker(false);
+       setDrawerChoosingBanner(null);
+       setTurnEndedWord(null);
++      setGuessedPlayerIds(new Set());
+ 
+       setCurrentRound(data.currentRound);
+       setCurrentTurn(data.currentTurn);
+@@ -201,6 +213,15 @@ export const GameView: React.FC<GameViewProps> = ({
+       setTurnEndedWord(data.secretWord);
+     };
+ 
++    // 8. Real-Time Chat & Guess Verification Listeners
++    const onChatMessage = (message: ChatMessage) => {
++      setMessages((prev) => [...prev, message]);
++    };
++
++    const onPlayerGuessed = (payload: PlayerGuessedPayload) => {
++      setGuessedPlayerIds((prev) => new Set(prev).add(payload.playerId));
++    };
++
+     socket.on('draw_start', onDrawStart);
+     socket.on('draw_move', onDrawMove);
+     socket.on('draw_end', onDrawEnd);
+@@ -216,6 +237,8 @@ export const GameView: React.FC<GameViewProps> = ({
+     socket.on('word_hint', onWordHint);
+     socket.on('turn_timer_tick', onTurnTimerTick);
+     socket.on('turn_end', onTurnEnd);
++    socket.on('chat_message', onChatMessage);
++    socket.on('player_guessed_correct', onPlayerGuessed);
+ 
+     return () => {
+       socket.off('draw_start', onDrawStart);
+@@ -233,6 +256,8 @@ export const GameView: React.FC<GameViewProps> = ({
+       socket.off('word_hint', onWordHint);
+       socket.off('turn_timer_tick', onTurnTimerTick);
+       socket.off('turn_end', onTurnEnd);
++      socket.off('chat_message', onChatMessage);
++      socket.off('player_guessed_correct', onPlayerGuessed);
+     };
+   }, [
+     room.id,
+@@ -249,7 +274,7 @@ export const GameView: React.FC<GameViewProps> = ({
+     <div
+       style={{
+         width: '100%',
+-        maxWidth: '1100px',
++        maxWidth: '1280px',
+         margin: '0 auto',
+         padding: '1rem',
+         display: 'flex',
+@@ -353,11 +378,11 @@ export const GameView: React.FC<GameViewProps> = ({
+         </div>
+       )}
+ 
+-      {/* Main Game Arena Grid */}
++      {/* Main Game Arena Grid: 3-column layout (Roster | Canvas | Chat) */}
+       <div
+         style={{
+           display: 'grid',
+-          gridTemplateColumns: '220px 1fr',
++          gridTemplateColumns: 'minmax(180px, 200px) 1fr minmax(260px, 300px)',
+           gap: '1rem',
+           alignItems: 'start',
+         }}
+@@ -388,6 +413,7 @@ export const GameView: React.FC<GameViewProps> = ({
+             {players.map((p, idx) => {
+               const isTurnDrawer = p.id === currentDrawerId;
+               const isSelf = p.id === currentPlayer.id;
++              const isGuessed = guessedPlayerIds.has(p.id);
+ 
+               return (
+                 <div
+@@ -398,8 +424,8 @@ export const GameView: React.FC<GameViewProps> = ({
+                     gap: '0.6rem',
+                     padding: '0.5rem 0.65rem',
+                     borderRadius: '10px',
+-                    background: isTurnDrawer ? '#fefce8' : isSelf ? '#eff6ff' : '#f8fafc',
+-                    border: isTurnDrawer ? '2px solid #eab308' : isSelf ? '1.5px solid #3b82f6' : '1px solid #e2e8f0',
++                    background: isGuessed ? '#f0fdf4' : isTurnDrawer ? '#fefce8' : isSelf ? '#eff6ff' : '#f8fafc',
++                    border: isGuessed ? '2px solid #22c55e' : isTurnDrawer ? '2px solid #eab308' : isSelf ? '1.5px solid #3b82f6' : '1px solid #e2e8f0',
+                   }}
+                 >
+                   {/* Rank number */}
+@@ -420,19 +446,24 @@ export const GameView: React.FC<GameViewProps> = ({
+                     </div>
+                   </div>
+ 
+-                  {/* Drawer Pencil Badge */}
++                  {/* Drawer Pencil or Guessed Checkmark Badge */}
+                   {isTurnDrawer && (
+                     <span title="Drawing now!" style={{ color: '#eab308', display: 'inline-flex' }}>
+                       <Pencil size={16} />
+                     </span>
+                   )}
++                  {isGuessed && (
++                    <span title="Guessed the word!" style={{ color: '#16a34a', display: 'inline-flex' }}>
++                      <CheckCircle2 size={16} />
++                    </span>
++                  )}
+                 </div>
+               );
+             })}
+           </div>
+         </div>
+ 
+-        {/* Right Column: Canvas + Role-Restricted Controls */}
++        {/* Center Column: Canvas + Role-Restricted Controls */}
+         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+           {/* Canvas Component */}
+           <div style={{ width: '100%', height: '500px', position: 'relative' }}>
+@@ -530,6 +561,17 @@ export const GameView: React.FC<GameViewProps> = ({
+             </button>
+           </div>
+         </div>
++
++        {/* Right Column: Interactive Real-Time Game Chat & Guess Verification */}
++        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
++          <ChatBox
++            messages={messages}
++            onSendMessage={handleSendMessage}
++            isDrawer={isDrawer}
++            hasGuessed={guessedPlayerIds.has(currentPlayer.id)}
++            isDrawingPhase={!showWordPicker && !drawerChoosingBanner && !turnEndedWord}
++          />
++        </div>
+       </div>
+     </div>
+   );
+diff --git a/frontend/src/types/game.ts b/frontend/src/types/game.ts
+index b470d4a..ed56026 100644
+--- a/frontend/src/types/game.ts
++++ b/frontend/src/types/game.ts
+@@ -103,3 +103,30 @@ export interface RemoteDrawUndoPayload {
+ export interface RemoteCanvasClearPayload {
+   roomId: string;
+ }
++
++// Phase 7: Real-Time Chat & Guess Verification Contracts
++export type ChatMessageType =
++  | 'CHAT'
++  | 'SYSTEM'
++  | 'SUCCESS'
++  | 'SELF_SUCCESS'
++  | 'CLOSE_HINT'
++  | 'GUESSED_CHAT'
++  | 'WARNING';
++
++export interface ChatMessage {
++  id: string;
++  senderId: string;
++  senderName: string;
++  text: string;
++  type: ChatMessageType;
++  timestamp: number;
++}
++
++export interface PlayerGuessedPayload {
++  roomId: string;
++  playerId: string;
++  playerName: string;
++  guessOrder: number;
++}
++

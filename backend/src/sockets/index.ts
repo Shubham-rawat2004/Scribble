@@ -3,6 +3,7 @@ import { Server as HTTPServer } from 'http';
 import { registerRoomHandlers } from './roomHandler.js';
 import { registerDrawingHandlers } from './drawingHandler.js';
 import { registerGameHandlers } from './gameHandler.js';
+import { registerChatHandlers } from './chatHandler.js';
 
 /**
  * Initializes and configures the Socket.IO server.
@@ -32,6 +33,7 @@ export function initializeSockets(httpServer: HTTPServer, allowedOrigin: string)
     registerRoomHandlers(io, socket);
     registerDrawingHandlers(io, socket);
     registerGameHandlers(io, socket);
+    registerChatHandlers(io, socket);
 
     // Test ping-pong roundtrip event for latency and connectivity verification
     socket.on('ping_test', (data, callback) => {

@@ -1,0 +1,325 @@
+diff --git a/backend/src/game/RoomManager.ts b/backend/src/game/RoomManager.ts
+index 82ac4f5..514aa29 100644
+--- a/backend/src/game/RoomManager.ts
++++ b/backend/src/game/RoomManager.ts
+@@ -282,4 +282,49 @@ export class RoomManager {
+   public getActiveRoomCount(): number {
+     return this.rooms.size;
+   }
++
++  public findOpenPublicRoom(): Room | undefined {
++    for (const room of this.rooms.values()) {
++      if (
++        !room.settings.isPrivate &&
++        room.status === 'LOBBY' &&
++        room.players.size < room.settings.maxPlayers
++      ) {
++        return room;
++      }
++    }
++    return undefined;
++  }
++
++  public getSocketIdByPlayerId(playerId: string): string | undefined {
++    for (const [sockId, mapping] of this.socketToPlayerMap.entries()) {
++      if (mapping.playerId === playerId) {
++        return sockId;
++      }
++    }
++    return undefined;
++  }
++
++  public async kickPlayer(roomId: string, targetPlayerId: string): Promise<boolean> {
++    const room = this.rooms.get(roomId.toUpperCase());
++    if (!room) return false;
++
++    const player = room.getPlayer(targetPlayerId);
++    if (!player) return false;
++
++    const sockId = this.getSocketIdByPlayerId(targetPlayerId);
++    if (sockId) {
++      this.socketToPlayerMap.delete(sockId);
++    }
++
++    room.removePlayer(targetPlayerId);
++
++    try {
++      await pool.execute('DELETE FROM players WHERE player_id = ?', [targetPlayerId]);
++    } catch (err) {
++      console.error('[RoomManager] Failed to delete kicked player from MySQL:', err);
++    }
++
++    return true;
++  }
+ }
+diff --git a/backend/src/game/WordManager.ts b/backend/src/game/WordManager.ts
+index 75a5367..9f7a3d9 100644
+--- a/backend/src/game/WordManager.ts
++++ b/backend/src/game/WordManager.ts
+@@ -50,11 +50,25 @@ const FALLBACK_WORDS: WordOption[] = [
+ export class WordManager {
+   /**
+    * Fetches N random word options for the drawer.
++   * If custom words are provided in room settings, prioritizes them.
+    * Attempts to query MySQL `words` table first; seamlessly falls back to categorized memory catalog.
+    */
+-  public static async getRandomWords(count: number = 3): Promise<WordOption[]> {
++  public static async getRandomWords(count: number = 3, customWords?: string[]): Promise<WordOption[]> {
+     const safeCount = Math.min(Math.max(count, 1), 5);
+ 
++    // If host provided custom words, prioritize them
++    if (customWords && customWords.length > 0) {
++      const sanitized = Array.from(new Set(customWords.map(w => w.trim().toLowerCase()))).filter(w => w.length >= 2);
++      if (sanitized.length >= safeCount) {
++        const shuffledCustom = sanitized.sort(() => 0.5 - Math.random());
++        return shuffledCustom.slice(0, safeCount).map((w) => ({
++          word: w,
++          category: 'CUSTOM',
++          difficulty: 'MEDIUM',
++        }));
++      }
++    }
++
+     try {
+       const [rows] = await pool.query(
+         `SELECT word, category, difficulty FROM words ORDER BY RAND() LIMIT ?`,
+diff --git a/backend/src/sockets/roomHandler.ts b/backend/src/sockets/roomHandler.ts
+index 039d583..b4a80c4 100644
+--- a/backend/src/sockets/roomHandler.ts
++++ b/backend/src/sockets/roomHandler.ts
+@@ -29,6 +29,14 @@ function sanitizeSettings(input?: Partial<RoomSettings>): RoomSettings {
+   const hintsAllowed = Math.min(Math.max(Number(input?.hintsAllowed) || DEFAULT_SETTINGS.hintsAllowed, 0), 5);
+   const isPrivate = Boolean(input?.isPrivate);
+ 
++  let customWords: string[] | undefined = undefined;
++  if (Array.isArray(input?.customWords)) {
++    customWords = input.customWords
++      .map((w) => String(w).trim().toLowerCase())
++      .filter((w) => w.length >= 2 && w.length <= 30 && /^[a-zA-Z\s-]+$/.test(w));
++    if (customWords.length === 0) customWords = undefined;
++  }
++
+   return {
+     maxPlayers,
+     totalRounds,
+@@ -36,6 +44,7 @@ function sanitizeSettings(input?: Partial<RoomSettings>): RoomSettings {
+     wordOptionsCount,
+     hintsAllowed,
+     isPrivate,
++    customWords,
+   };
+ }
+ 
+@@ -157,6 +166,56 @@ export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
+         if (typeof callback === 'function') {
+           callback(response);
+         }
+ 
+         console.log(`[Socket.IO] Player "${rawName}" joined room "${room.id}" (Total: ${allPlayers.length})`);
+       } catch (err) {
+         const message = (err as Error).message || 'Failed to join room.';
+         console.warn(`[Socket.IO] join_room failed: ${message}`);
+         const errorRes: JoinRoomResponse = { success: false, error: message };
+         if (typeof callback === 'function') callback(errorRes);
+       }
+     }
+   );
++
++  /**
++   * Event: quick_play
++   * Public room matchmaking: joins an existing open public lobby or spins up a new one.
++   */
++  socket.on(
++    'quick_play',
++    async (
++      data: { playerName: string; avatarId?: string },
++      callback?: (res: JoinRoomResponse) => void
++    ) => {
++      try {
++        const rawName = (data?.playerName || 'Player').trim();
++        const avatarId = data?.avatarId || 'skribbl_0_0_0';
++
++        const openRoom = roomManager.findOpenPublicRoom();
++        if (openRoom) {
++          const { room, player } = await roomManager.joinRoom(openRoom.id, rawName, avatarId, socket.id);
++          await socket.join(room.id);
++          const allPlayers = room.getPlayerList().map((p) => p.toDTO());
++          socket.to(room.id).emit('player_joined', {
++            player: player.toDTO(),
++            players: allPlayers,
++          });
++          console.log(`[Socket.IO] Matchmaking: "${rawName}" matched into public room "${room.id}"`);
++          if (typeof callback === 'function') {
++            callback({ success: true, roomId: room.id, room: room.toDTO(), player: player.toDTO() });
++          }
++        } else {
++          const { room, host } = await roomManager.createRoom(
++            rawName,
++            avatarId,
++            { isPrivate: false, maxPlayers: 8, totalRounds: 3, drawTimeSeconds: 80, wordOptionsCount: 3, hintsAllowed: 2 },
++            socket.id
++          );
++          await socket.join(room.id);
++          console.log(`[Socket.IO] Matchmaking: Created new public room "${room.id}" for host "${rawName}"`);
++          if (typeof callback === 'function') {
++            callback({ success: true, roomId: room.id, room: room.toDTO(), player: host.toDTO() });
++          }
++        }
++      } catch (err) {
++        const message = (err as Error).message || 'Failed to match into room.';
++        console.warn(`[Socket.IO] quick_play failed: ${message}`);
++        if (typeof callback === 'function') {
++          callback({ success: false, error: message });
++        }
++      }
++    }
++  );
++
++  /**
++   * Event: kick_player
++   * Host moderates room by kicking a player from the lobby or match.
++   */
++  socket.on(
++    'kick_player',
++    async (
++      data: { roomId: string; targetPlayerId: string },
++      callback?: (res: { success: boolean; error?: string }) => void
++    ) => {
++      try {
++        if (!data || !data.roomId || !data.targetPlayerId) {
++          if (callback) callback({ success: false, error: 'Invalid parameters.' });
++          return;
++        }
++
++        const room = roomManager.getRoom(data.roomId);
++        if (!room) {
++          if (callback) callback({ success: false, error: 'Room not found.' });
++          return;
++        }
++
++        const hostPlayer = room.getPlayerBySocket(socket.id);
++        if (!hostPlayer || !hostPlayer.isHost) {
++          if (callback) callback({ success: false, error: 'Only the host can kick players.' });
++          return;
++        }
++
++        const targetPlayer = room.getPlayer(data.targetPlayerId);
++        if (!targetPlayer) {
++          if (callback) callback({ success: false, error: 'Target player not found in room.' });
++          return;
++        }
++
++        if (targetPlayer.isHost) {
++          if (callback) callback({ success: false, error: 'Cannot kick the room host.' });
++          return;
++        }
++
++        const targetSocketId = roomManager.getSocketIdByPlayerId(targetPlayer.id);
++
++        // Remove target player from in-memory room and MySQL
++        await roomManager.kickPlayer(room.id, targetPlayer.id);
++
++        // Notify target client directly that they were kicked
++        if (targetSocketId) {
++          const targetSocket = io.sockets.sockets.get(targetSocketId);
++          if (targetSocket) {
++            targetSocket.emit('kicked', { reason: 'You were kicked from the room by the host.' });
++            targetSocket.leave(room.id);
++          }
++        }
++
++        // Broadcast player_left to remaining participants
++        const remainingPlayers = room.getPlayerList().map((p) => p.toDTO());
++        io.to(room.id).emit('player_left', {
++          playerId: targetPlayer.id,
++          players: remainingPlayers,
++        });
++
++        console.log(`[Socket.IO] Host "${hostPlayer.name}" kicked "${targetPlayer.name}" from room "${room.id}"`);
++        if (callback) callback({ success: true });
++      } catch (err) {
++        console.error('[Socket.IO] Error in kick_player:', err);
++        if (callback) callback({ success: false, error: 'Failed to kick player.' });
++      }
++    }
++  );
+diff --git a/frontend/src/pages/Lobby.tsx b/frontend/src/pages/Lobby.tsx
+index 78691f1..0e92593 100644
+--- a/frontend/src/pages/Lobby.tsx
++++ b/frontend/src/pages/Lobby.tsx
+@@ -14,6 +14,7 @@ import {
+   Settings,
+   AlertCircle,
+   Sparkles,
++  UserX,
+ } from 'lucide-react';
+ 
+ interface LobbyProps {
+@@ -61,18 +62,38 @@ export const Lobby: React.FC<LobbyProps> = ({
+       onGameStarted(data.session);
+     };
+ 
++    const onKicked = (data: { reason: string }) => {
++      alert(data.reason || 'You were kicked from the room by the host.');
++      onLeaveRoom();
++    };
++
+     socket.on('player_joined', onPlayerJoined);
+     socket.on('player_left', onPlayerLeft);
+     socket.on('start_game', onGameStartedEvent);
+     socket.on('game_started', onGameStartedEvent);
++    socket.on('kicked', onKicked);
+ 
+     return () => {
+       socket.off('player_joined', onPlayerJoined);
+       socket.off('player_left', onPlayerLeft);
+       socket.off('start_game', onGameStartedEvent);
+       socket.off('game_started', onGameStartedEvent);
++      socket.off('kicked', onKicked);
+     };
+-  }, [currentPlayer.id, onGameStarted]);
++  }, [currentPlayer.id, onGameStarted, onLeaveRoom]);
++
++  const handleKickPlayer = (targetPlayerId: string, playerName: string) => {
++    if (!window.confirm(`Are you sure you want to kick ${playerName}?`)) return;
++    socket.emit(
++      'kick_player',
++      { roomId: room.id, targetPlayerId },
++      (res: { success: boolean; error?: string }) => {
++        if (!res.success) {
++          setError(res.error || 'Failed to kick player.');
++        }
++      }
++    );
++  };
+@@ -247,6 +268,30 @@ export const Lobby: React.FC<LobbyProps> = ({
+                       </span>
+                     </div>
+                   </div>
++
++                  {/* Host Kick Player Moderation Control (REQ-NH-06) */}
++                  {isHost && !p.isHost && (
++                    <button
++                      type="button"
++                      title={`Kick ${p.name}`}
++                      onClick={() => handleKickPlayer(p.id, p.name)}
++                      style={{
++                        background: 'none',
++                        border: 'none',
++                        color: '#ef4444',
++                        cursor: 'pointer',
++                        padding: '0.35rem',
++                        borderRadius: '6px',
++                        display: 'inline-flex',
++                        alignItems: 'center',
++                        transition: 'background 0.2s',
++                      }}
++                      onMouseEnter={(e) => (e.currentTarget.style.background = '#fee2e2')}
++                      onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
++                    >
++                      <UserX size={17} />
++                    </button>
++                  )}
+                 </div>
+               );
+             })}

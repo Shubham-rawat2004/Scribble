@@ -7,6 +7,7 @@ interface WordMaskBarProps {
   wordMask?: string;
   wordLength?: number;
   timeRemaining?: number;
+  gameMode?: string;
 }
 
 export const WordMaskBar: React.FC<WordMaskBarProps> = ({
@@ -15,6 +16,7 @@ export const WordMaskBar: React.FC<WordMaskBarProps> = ({
   wordMask = '',
   wordLength = 0,
   timeRemaining = 80,
+  gameMode = 'Normal',
 }) => {
   const isTimeCritical = timeRemaining <= 15;
 
@@ -69,6 +71,16 @@ export const WordMaskBar: React.FC<WordMaskBarProps> = ({
           <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b' }}>
             ({secretWord.length})
           </span>
+          {gameMode === 'Hidden' && (
+            <span style={{ background: '#fef3c7', color: '#92400e', fontSize: '0.68rem', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 700 }}>
+              Hidden
+            </span>
+          )}
+          {gameMode === 'Combination' && (
+            <span style={{ background: '#ede9fe', color: '#6d28d9', fontSize: '0.68rem', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 700 }}>
+              Combination
+            </span>
+          )}
         </div>
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -86,6 +98,16 @@ export const WordMaskBar: React.FC<WordMaskBarProps> = ({
           {wordLength > 0 && (
             <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#64748b' }}>
               ({wordLength})
+            </span>
+          )}
+          {gameMode === 'Hidden' && (
+            <span style={{ background: '#fef3c7', color: '#92400e', fontSize: '0.68rem', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 700 }}>
+              Hidden
+            </span>
+          )}
+          {gameMode === 'Combination' && (
+            <span style={{ background: '#ede9fe', color: '#6d28d9', fontSize: '0.68rem', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 700 }}>
+              Combination
             </span>
           )}
         </div>

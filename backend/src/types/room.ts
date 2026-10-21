@@ -5,6 +5,10 @@ export interface RoomSettings {
   wordOptionsCount: number; // 1 to 5
   hintsAllowed: number;     // 0 to 5
   isPrivate: boolean;
+  customWords?: string[];
+  customWordsOnly?: boolean;
+  language?: string;
+  gameMode?: string;
 }
 
 export type RoomStatus = 'LOBBY' | 'PLAYING' | 'FINISHED' | 'ABANDONED';
@@ -16,6 +20,7 @@ export interface PlayerDTO {
   isHost: boolean;
   score: number;
   isConnected: boolean;
+  isSpectator?: boolean;
 }
 
 export interface DrawPoint {
@@ -61,6 +66,7 @@ export interface JoinRoomPayload {
   roomId: string;
   playerName: string;
   avatarId?: string;
+  isSpectator?: boolean;
 }
 
 export interface JoinRoomResponse {
@@ -68,6 +74,7 @@ export interface JoinRoomResponse {
   roomId?: string;
   room?: RoomDTO;
   player?: PlayerDTO;
+  session?: GameSessionDTO;
   error?: string;
 }
 

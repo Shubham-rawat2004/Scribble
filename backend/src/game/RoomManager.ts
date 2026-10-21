@@ -94,7 +94,8 @@ export class RoomManager {
     roomIdInput: string,
     playerName: string,
     avatarId: string = 'avatar_1',
-    socketId: string
+    socketId: string,
+    isSpectator: boolean = false
   ): Promise<{ room: Room; player: Player }> {
     const roomId = roomIdInput.trim().toUpperCase();
     const room = this.rooms.get(roomId);
@@ -103,8 +104,8 @@ export class RoomManager {
       throw new Error(`Room "${roomId}" not found.`);
     }
 
-    if (room.status !== 'LOBBY') {
-      throw new Error(`Room "${roomId}" is already in an active game or has ended.`);
+    if (room.status !== 'LOBBY' && room.status !== 'PLAYING') {
+      throw new Error(`Room "${roomId}" is not available to join (Status: ${room.status}).`);
     }
 
     if (room.isFull()) {
@@ -116,7 +117,7 @@ export class RoomManager {
     }
 
     const playerId = crypto.randomUUID();
-    const player = new Player(playerId, socketId, playerName, avatarId, false, 0);
+    const player = new Player(playerId, socketId, playerName, avatarId, false, 0, isSpectator);
 
     room.addPlayer(player);
     this.socketToPlayerMap.set(socketId, { roomId, playerId });
@@ -147,16 +148,18 @@ export class RoomManager {
   /**
    * Transitions room from LOBBY to PLAYING and records session in MySQL.
    */
-  public async startGame(roomId: string, socketId: string): Promise<{ room: Room; session: GameSessionDTO }> {
+  public async startGame(roomId: string, socketId?: string): Promise<{ room: Room; session: GameSessionDTO }> {
     const room = this.rooms.get(roomId.toUpperCase());
     if (!room) {
       throw new Error('Room not found.');
     }
 
-    // Verify caller is the host
-    const caller = room.getPlayerBySocket(socketId);
-    if (!caller || caller.id !== room.hostPlayerId) {
-      throw new Error('Only the room host can start the game.');
+    // Verify caller is the room host (if called by a client socket)
+    if (socketId) {
+      const caller = room.getPlayerBySocket(socketId);
+      if (!caller || caller.id !== room.hostPlayerId) {
+        throw new Error('Only the room host can start the game.');
+      }
     }
 
     const check = room.canStartGame();
@@ -225,33 +228,30 @@ export class RoomManager {
 
     player.setConnectionStatus(false);
 
-    // If still in lobby, remove player from the roster
-    if (room.status === 'LOBBY') {
-      const { removed, newHost } = room.removePlayer(player.id);
-      console.log(`[RoomManager] Removed player ${player.name} from lobby ${room.id}.`);
+    // Remove player from the room roster (applies to both LOBBY and active match)
+    const { removed, newHost } = room.removePlayer(player.id);
+    console.log(`[RoomManager] Removed player ${player.name} from room ${room.id} (Status: ${room.status}).`);
 
-      // Update player connection status in MySQL
-      try {
-        await pool.execute(`UPDATE players SET is_connected = 0 WHERE player_id = ?`, [player.id]);
-      } catch (err) {
-        console.error('[RoomManager] Failed to update player disconnect in MySQL:', err);
-      }
-
-      // If room is empty, delete it
-      if (room.players.size === 0) {
-        this.rooms.delete(room.id);
-        console.log(`[RoomManager] Room ${room.id} is empty. Deleted from memory.`);
-        try {
-          await pool.execute(`UPDATE rooms SET status = 'ABANDONED' WHERE room_id = ?`, [room.id]);
-        } catch (err) {
-          console.error('[RoomManager] Failed to mark room abandoned in MySQL:', err);
-        }
-      }
-
-      return { room, player, wasRemoved: removed, newHost };
+    // Update player connection status in MySQL
+    try {
+      await pool.execute(`UPDATE players SET is_connected = 0 WHERE player_id = ?`, [player.id]);
+    } catch (err) {
+      console.error('[RoomManager] Failed to update player disconnect in MySQL:', err);
     }
 
-    return { room, player, wasRemoved: false };
+    // If room is empty, delete it
+    if (room.players.size === 0) {
+      this.rooms.delete(room.id);
+      this.turnManagers.delete(room.id);
+      console.log(`[RoomManager] Room ${room.id} is empty. Deleted from memory.`);
+      try {
+        await pool.execute(`UPDATE rooms SET status = 'ABANDONED' WHERE room_id = ?`, [room.id]);
+      } catch (err) {
+        console.error('[RoomManager] Failed to mark room abandoned in MySQL:', err);
+      }
+    }
+
+    return { room, player, wasRemoved: removed, newHost };
   }
 
   public getRoom(roomId: string): Room | undefined {
@@ -281,5 +281,62 @@ export class RoomManager {
 
   public getActiveRoomCount(): number {
     return this.rooms.size;
+  }
+
+  public findOpenPublicRoom(): Room | undefined {
+    // 1. Prioritize open public rooms still in LOBBY
+    for (const room of this.rooms.values()) {
+      if (
+        !room.settings.isPrivate &&
+        room.status === 'LOBBY' &&
+        room.players.size < room.settings.maxPlayers
+      ) {
+        return room;
+      }
+    }
+
+    // 2. Fall back to open public rooms in PLAYING status (late join)
+    for (const room of this.rooms.values()) {
+      if (
+        !room.settings.isPrivate &&
+        room.status === 'PLAYING' &&
+        room.players.size < room.settings.maxPlayers
+      ) {
+        return room;
+      }
+    }
+    return undefined;
+  }
+
+  public getSocketIdByPlayerId(playerId: string): string | undefined {
+    for (const [sockId, mapping] of this.socketToPlayerMap.entries()) {
+      if (mapping.playerId === playerId) {
+        return sockId;
+      }
+    }
+    return undefined;
+  }
+
+  public async kickPlayer(roomId: string, targetPlayerId: string): Promise<boolean> {
+    const room = this.rooms.get(roomId.toUpperCase());
+    if (!room) return false;
+
+    const player = room.getPlayer(targetPlayerId);
+    if (!player) return false;
+
+    const sockId = this.getSocketIdByPlayerId(targetPlayerId);
+    if (sockId) {
+      this.socketToPlayerMap.delete(sockId);
+    }
+
+    room.removePlayer(targetPlayerId);
+
+    try {
+      await pool.execute('DELETE FROM players WHERE player_id = ?', [targetPlayerId]);
+    } catch (err) {
+      console.error('[RoomManager] Failed to delete kicked player from MySQL:', err);
+    }
+
+    return true;
   }
 }
