@@ -6,6 +6,13 @@ import { TurnManager } from './TurnManager.js';
 import { generateRoomCode } from '../utils/codeGenerator.js';
 import { pool } from '../db/connection.js';
 
+interface DisconnectGraceEntry {
+  timer: NodeJS.Timeout;
+  roomId: string;
+  playerId: string;
+  expiresAt: number;
+}
+
 /**
  * Singleton Service managing all active in-memory rooms and coordinating with MySQL.
  * Equivalent to a Spring Boot @Service bean managing active match state.
@@ -15,6 +22,7 @@ export class RoomManager {
   private rooms: Map<string, Room> = new Map();
   private socketToPlayerMap: Map<string, { roomId: string; playerId: string }> = new Map();
   private turnManagers: Map<string, TurnManager> = new Map();
+  private disconnectGraceMap: Map<string, DisconnectGraceEntry> = new Map();
 
   private constructor() {}
 
@@ -23,6 +31,60 @@ export class RoomManager {
       RoomManager.instance = new RoomManager();
     }
     return RoomManager.instance;
+  }
+
+  /**
+   * Registers a socket connection to a specific room and player ID.
+   */
+  public registerSocket(socketId: string, roomId: string, playerId: string): void {
+    this.socketToPlayerMap.set(socketId, { roomId, playerId });
+  }
+
+  /**
+   * Starts a reconnection grace timer for a disconnected player in an active match.
+   */
+  public startDisconnectGrace(
+    roomId: string,
+    playerId: string,
+    onExpired: () => void,
+    durationMs: number = 20000
+  ): void {
+    // Clear any existing timer for this player
+    this.cancelDisconnectGrace(playerId);
+
+    const timer = setTimeout(() => {
+      this.disconnectGraceMap.delete(playerId);
+      onExpired();
+    }, durationMs);
+
+    this.disconnectGraceMap.set(playerId, {
+      timer,
+      roomId,
+      playerId,
+      expiresAt: Date.now() + durationMs,
+    });
+    console.log(`[RoomManager] Started ${durationMs / 1000}s reconnect grace period for player ${playerId} in room ${roomId}.`);
+  }
+
+  /**
+   * Cancels a pending reconnection grace timer (called when player reconnects or explicitly leaves).
+   */
+  public cancelDisconnectGrace(playerId: string): boolean {
+    const entry = this.disconnectGraceMap.get(playerId);
+    if (entry) {
+      clearTimeout(entry.timer);
+      this.disconnectGraceMap.delete(playerId);
+      console.log(`[RoomManager] Cancelled reconnect grace period for player ${playerId}.`);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Checks if a player is currently in a reconnection grace window.
+   */
+  public isPlayerInGrace(playerId: string): boolean {
+    return this.disconnectGraceMap.has(playerId);
   }
 
   /**
@@ -201,33 +263,47 @@ export class RoomManager {
   }
 
   /**
-   * Handles player disconnection, roster cleanup, and host migration.
+   * Handles player disconnection, distinguishing temporary drops during PLAYING (grace period)
+   * from explicit leaves or lobby departures.
    */
-  public async handleDisconnect(socketId: string): Promise<{
+  public async handleDisconnect(
+    socketId: string,
+    isExplicitLeave: boolean = false
+  ): Promise<{
     room?: Room;
     player?: Player;
     wasRemoved: boolean;
+    isGracePeriod: boolean;
     newHost?: Player;
   }> {
     const mapping = this.socketToPlayerMap.get(socketId);
     if (!mapping) {
-      return { wasRemoved: false };
+      return { wasRemoved: false, isGracePeriod: false };
     }
 
     this.socketToPlayerMap.delete(socketId);
     const room = this.rooms.get(mapping.roomId);
     if (!room) {
-      return { wasRemoved: false };
+      return { wasRemoved: false, isGracePeriod: false };
     }
 
     const player = room.getPlayer(mapping.playerId);
     if (!player) {
-      return { room, wasRemoved: false };
+      return { room, wasRemoved: false, isGracePeriod: false };
     }
 
     player.setConnectionStatus(false);
 
-    // Remove player from the room roster (applies to both LOBBY and active match)
+    // If active match is PLAYING and it wasn't an explicit leave (e.g. mobile background / network drop)
+    if (room.status === 'PLAYING' && !isExplicitLeave) {
+      console.log(
+        `[RoomManager] Player ${player.name} (${player.id}) disconnected temporarily during match in room ${room.id}. Entering 20s grace period.`
+      );
+      return { room, player, wasRemoved: false, isGracePeriod: true };
+    }
+
+    // Explicit leave or in LOBBY: Permanently remove player
+    this.cancelDisconnectGrace(player.id);
     const { removed, newHost } = room.removePlayer(player.id);
     console.log(`[RoomManager] Removed player ${player.name} from room ${room.id} (Status: ${room.status}).`);
 
@@ -250,7 +326,48 @@ export class RoomManager {
       }
     }
 
-    return { room, player, wasRemoved: removed, newHost };
+    return { room, player, wasRemoved: removed, isGracePeriod: false, newHost };
+  }
+
+  /**
+   * Permanently removes a player after their reconnection grace timer expires.
+   */
+  public async permanentlyRemovePlayer(
+    roomId: string,
+    playerId: string
+  ): Promise<{
+    room?: Room;
+    player?: Player;
+    removed: boolean;
+    newHost?: Player;
+  }> {
+    const room = this.rooms.get(roomId.toUpperCase());
+    if (!room) return { removed: false };
+
+    const player = room.getPlayer(playerId);
+    if (!player) return { room, removed: false };
+
+    this.cancelDisconnectGrace(playerId);
+    const { removed, newHost } = room.removePlayer(playerId);
+    console.log(`[RoomManager] Permanently removed player ${player.name} from room ${room.id} after grace timeout.`);
+
+    try {
+      await pool.execute(`UPDATE players SET is_connected = 0 WHERE player_id = ?`, [playerId]);
+    } catch (err) {
+      console.error('[RoomManager] Failed to update player disconnect in MySQL:', err);
+    }
+
+    if (room.players.size === 0) {
+      this.rooms.delete(room.id);
+      this.turnManagers.delete(room.id);
+      try {
+        await pool.execute(`UPDATE rooms SET status = 'ABANDONED' WHERE room_id = ?`, [room.id]);
+      } catch (err) {
+        console.error('[RoomManager] Failed to mark room abandoned in MySQL:', err);
+      }
+    }
+
+    return { room, player, removed, newHost };
   }
 
   public getRoom(roomId: string): Room | undefined {
@@ -322,6 +439,8 @@ export class RoomManager {
 
     const player = room.getPlayer(targetPlayerId);
     if (!player) return false;
+
+    this.cancelDisconnectGrace(targetPlayerId);
 
     const sockId = this.getSocketIdByPlayerId(targetPlayerId);
     if (sockId) {

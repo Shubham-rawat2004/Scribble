@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, MessageSquare, CheckCircle2, Sparkles, AlertTriangle, Crown, UserPlus, UserMinus, Lock } from 'lucide-react';
+import { Send, MessageSquare, CheckCircle2, Lock } from 'lucide-react';
 import { ChatMessage } from '../types/game';
 
 interface ChatBoxProps {
@@ -108,7 +108,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           maxHeight: '420px',
         }}
       >
-        {messages.length === 0 ? (
+                {messages.length === 0 ? (
           <div
             style={{
               textAlign: 'center',
@@ -121,43 +121,22 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
             Match chat started! Guesses will appear here.
           </div>
         ) : (
-          messages.map((msg) => {
-            if (msg.type === 'SUCCESS') {
-              return (
-                <div
-                  key={msg.id}
-                  style={{
-                    backgroundColor: '#d1fae5',
-                    color: '#065f46',
-                    fontWeight: 700,
-                    padding: '0.4rem 0.75rem',
-                    borderRadius: '8px',
-                    fontSize: '0.85rem',
-                    borderLeft: '4px solid #10b981',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.4rem',
-                  }}
-                >
-                  <Sparkles size={15} color="#059669" />
-                  <span>{msg.text}</span>
-                </div>
-              );
-            }
+          messages.map((msg, index) => {
+            const isEven = index % 2 === 0;
+            const defaultRowBg = isEven ? '#ffffff' : '#f8fafc';
 
-            if (msg.type === 'SELF_SUCCESS') {
+            // 1. Drawer Announcement: "Rahul is drawing now!" (Screenshot 4)
+            if (msg.type === 'DRAWER_ANNOUNCEMENT') {
               return (
                 <div
                   key={msg.id}
                   style={{
-                    backgroundColor: '#10b981',
-                    color: '#ffffff',
+                    color: '#2563eb',
                     fontWeight: 800,
-                    padding: '0.5rem 0.75rem',
-                    borderRadius: '8px',
                     fontSize: '0.9rem',
-                    textAlign: 'center',
-                    boxShadow: '0 2px 4px rgba(16, 185, 129, 0.3)',
+                    padding: '0.3rem 0.55rem',
+                    backgroundColor: defaultRowBg,
+                    lineHeight: 1.35,
                   }}
                 >
                   {msg.text}
@@ -165,6 +144,85 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
               );
             }
 
+            // 2. Word Reveal: "The word was 'radiation'" (Screenshot 4)
+            if (msg.type === 'WORD_REVEAL') {
+              return (
+                <div
+                  key={msg.id}
+                  style={{
+                    color: '#16a34a',
+                    fontWeight: 800,
+                    fontSize: '0.9rem',
+                    padding: '0.3rem 0.55rem',
+                    backgroundColor: defaultRowBg,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {msg.text}
+                </div>
+              );
+            }
+
+            // 3. Guessed the word: "Shubham Rawat guessed the word!" (Screenshot 4)
+            if (msg.type === 'SUCCESS') {
+              return (
+                <div
+                  key={msg.id}
+                  style={{
+                    backgroundColor: '#dcfce7',
+                    color: '#16a34a',
+                    fontWeight: 800,
+                    padding: '0.3rem 0.55rem',
+                    fontSize: '0.9rem',
+                    lineHeight: 1.35,
+                  }}
+                >
+                  <span>{msg.text}</span>
+                </div>
+              );
+            }
+
+            // 4. Self celebration for the solver
+            if (msg.type === 'SELF_SUCCESS') {
+              return (
+                <div
+                  key={msg.id}
+                  style={{
+                    backgroundColor: '#16a34a',
+                    color: '#ffffff',
+                    fontWeight: 800,
+                    padding: '0.35rem 0.6rem',
+                    fontSize: '0.9rem',
+                    textAlign: 'center',
+                    borderRadius: '4px',
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {msg.text}
+                </div>
+              );
+            }
+
+            // 5. Room owner notification (Screenshot 4)
+            if (msg.type === 'ROOM_OWNER') {
+              return (
+                <div
+                  key={msg.id}
+                  style={{
+                    color: '#ea580c',
+                    fontWeight: 800,
+                    fontSize: '0.9rem',
+                    padding: '0.3rem 0.55rem',
+                    backgroundColor: defaultRowBg,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {msg.text}
+                </div>
+              );
+            }
+
+            // 6. Close hint / warning
             if (msg.type === 'CLOSE_HINT') {
               return (
                 <div
@@ -173,16 +231,12 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                     backgroundColor: '#fef3c7',
                     color: '#92400e',
                     fontWeight: 700,
-                    padding: '0.4rem 0.75rem',
-                    borderRadius: '8px',
+                    padding: '0.3rem 0.55rem',
                     fontSize: '0.85rem',
-                    borderLeft: '4px solid #f59e0b',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.4rem',
+                    borderLeft: '3px solid #f59e0b',
+                    lineHeight: 1.35,
                   }}
                 >
-                  <AlertTriangle size={15} color="#d97706" />
                   <span>{msg.text}</span>
                 </div>
               );
@@ -196,10 +250,10 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                     backgroundColor: '#fee2e2',
                     color: '#991b1b',
                     fontWeight: 700,
-                    padding: '0.4rem 0.75rem',
-                    borderRadius: '8px',
+                    padding: '0.3rem 0.55rem',
                     fontSize: '0.85rem',
-                    borderLeft: '4px solid #ef4444',
+                    borderLeft: '3px solid #ef4444',
+                    lineHeight: 1.35,
                   }}
                 >
                   {msg.text}
@@ -207,111 +261,41 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
               );
             }
 
+            // 7. Solved Guesser Chat
             if (msg.type === 'GUESSED_CHAT') {
               return (
                 <div
                   key={msg.id}
                   style={{
-                    backgroundColor: '#f0fdf4',
+                    backgroundColor: defaultRowBg,
                     color: '#15803d',
-                    padding: '0.35rem 0.65rem',
-                    borderRadius: '8px',
-                    fontSize: '0.875rem',
-                    wordBreak: 'break-word',
-                    border: '1px solid #bbf7d0',
-                    boxShadow: '0 1px 2px rgba(16, 185, 129, 0.08)',
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: '0.68rem',
-                      backgroundColor: '#16a34a',
-                      color: '#ffffff',
-                      padding: '0.1rem 0.4rem',
-                      borderRadius: '4px',
-                      fontWeight: 800,
-                      marginRight: '0.4rem',
-                      letterSpacing: '0.04em',
-                    }}
-                  >
-                    GUESSER
-                  </span>
-                  <span style={{ fontWeight: 800, color: '#16a34a' }}>{msg.senderName}: </span>
-                  <span style={{ fontWeight: 600, color: '#15803d' }}>{msg.text}</span>
-                </div>
-              );
-            }
-
-            if (msg.type === 'ROOM_OWNER') {
-              return (
-                <div
-                  key={msg.id}
-                  style={{
-                    color: '#ea580c',
-                    fontWeight: 800,
+                    padding: '0.25rem 0.55rem',
                     fontSize: '0.88rem',
-                    padding: '0.35rem 0.5rem',
-                    textAlign: 'center',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '0.4rem',
-                    lineHeight: 1.3,
+                    wordBreak: 'break-word',
+                    lineHeight: 1.35,
                   }}
                 >
-                  <Crown size={15} color="#ea580c" />
-                  <span>{msg.text}</span>
+                  <span style={{ fontWeight: 800, color: '#16a34a' }}>{msg.senderName}: </span>
+                  <span style={{ fontWeight: 600 }}>{msg.text}</span>
                 </div>
               );
             }
 
-            if (msg.type === 'SYSTEM_INFO') {
-              const isCopyLink = msg.text.toLowerCase().includes('copied');
-              return (
-                <div
-                  key={msg.id}
-                  style={{
-                    backgroundColor: isCopyLink ? '#fef9c3' : 'transparent',
-                    color: isCopyLink ? '#854d0e' : '#c2410c',
-                    fontWeight: 700,
-                    fontSize: '0.85rem',
-                    padding: '0.35rem 0.65rem',
-                    borderRadius: '8px',
-                    border: isCopyLink ? '1px solid #fef08a' : 'none',
-                    textAlign: 'center',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '0.35rem',
-                  }}
-                >
-                  {isCopyLink && <CheckCircle2 size={14} color="#854d0e" />}
-                  <span>{msg.text}</span>
-                </div>
-              );
-            }
-
+            // 8. Player Join / Left
             if (msg.type === 'PLAYER_JOINED') {
               return (
                 <div
                   key={msg.id}
                   style={{
-                    backgroundColor: '#dcfce7',
-                    color: '#15803d',
-                    fontWeight: 800,
+                    color: '#16a34a',
+                    fontWeight: 700,
                     fontSize: '0.85rem',
-                    padding: '0.35rem 0.65rem',
-                    borderRadius: '8px',
-                    border: '1px solid #bbf7d0',
-                    textAlign: 'center',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '0.35rem',
+                    padding: '0.25rem 0.55rem',
+                    backgroundColor: defaultRowBg,
+                    lineHeight: 1.35,
                   }}
                 >
-                  <UserPlus size={14} color="#15803d" />
-                  <span>{msg.text}</span>
+                  {msg.text}
                 </div>
               );
             }
@@ -321,43 +305,34 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 <div
                   key={msg.id}
                   style={{
-                    backgroundColor: '#fee2e2',
                     color: '#b91c1c',
-                    fontWeight: 800,
+                    fontWeight: 700,
                     fontSize: '0.85rem',
-                    padding: '0.35rem 0.65rem',
-                    borderRadius: '8px',
-                    border: '1px solid #fecaca',
-                    textAlign: 'center',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '0.35rem',
+                    padding: '0.25rem 0.55rem',
+                    backgroundColor: defaultRowBg,
+                    lineHeight: 1.35,
                   }}
                 >
-                  <UserMinus size={14} color="#b91c1c" />
-                  <span>{msg.text}</span>
+                  {msg.text}
                 </div>
               );
             }
 
-            // Normal CHAT or SYSTEM
+            // 9. Standard Guess / Chat Message (Screenshot 4: "Tushar: beabsd")
             return (
               <div
                 key={msg.id}
                 style={{
-                  backgroundColor: '#ffffff',
-                  color: '#1e293b',
-                  padding: '0.35rem 0.65rem',
-                  borderRadius: '8px',
-                  fontSize: '0.875rem',
+                  backgroundColor: defaultRowBg,
+                  color: '#0f172a',
+                  padding: '0.25rem 0.55rem',
+                  fontSize: '0.9rem',
                   wordBreak: 'break-word',
-                  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
-                  border: '1px solid #e2e8f0',
+                  lineHeight: 1.35,
                 }}
               >
-                <span style={{ fontWeight: 800, color: '#2563eb' }}>{msg.senderName}: </span>
-                <span>{msg.text}</span>
+                <span style={{ fontWeight: 800, color: '#0f172a' }}>{msg.senderName}: </span>
+                <span style={{ fontWeight: 600 }}>{msg.text}</span>
               </div>
             );
           })

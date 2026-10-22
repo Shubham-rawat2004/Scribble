@@ -116,6 +116,15 @@ export async function handlePlayerLeftGameCheck(
 ) {
   if (room.status !== 'PLAYING') return;
 
+  const roomManager = RoomManager.getInstance();
+
+  // If any player in the room is currently in their reconnection grace period, do NOT terminate!
+  const hasPlayerInGrace = room.getPlayerList().some((p) => roomManager.isPlayerInGrace(p.id));
+  if (hasPlayerInGrace) {
+    console.log(`[Game] Room ${room.id} has disconnected player(s) in grace period. Deferring auto-termination.`);
+    return;
+  }
+
   const activePlayers = room.getActivePlayers();
 
   // If active player count drops below 2, immediately terminate the match!
@@ -125,7 +134,6 @@ export async function handlePlayerLeftGameCheck(
   }
 
   // Active players count is >= 2.
-  const roomManager = RoomManager.getInstance();
   const turnManager = roomManager.getTurnManager(room.id);
   if (!turnManager) return;
 
@@ -301,6 +309,18 @@ export async function executeStartDrawingTurn(
         drawerName: drawer?.name,
       });
 
+      // Announce revealed word in chat stream (Skribbl authentic experience)
+      const wordRevealMsg = {
+        id: crypto.randomUUID(),
+        senderId: 'system',
+        senderName: 'System',
+        text: `The word was '${secretWord}'`,
+        type: 'WORD_REVEAL',
+        timestamp: Date.now(),
+      };
+      room.addChatMessage(wordRevealMsg);
+      io.to(room.id).emit('chat_message', wordRevealMsg);
+
       // Wait 4 seconds for players to review turn summary scoreboard, then advance
       const postTimer = setTimeout(() => {
         if (room.status === 'PLAYING') {
@@ -310,6 +330,20 @@ export async function executeStartDrawingTurn(
       turnManager.setPostTurnTimeout(postTimer);
     }
   );
+
+  // Broadcast drawing player announcement in chat to all players: "Rahul is drawing now!"
+  if (drawer) {
+    const drawingNowMsg = {
+      id: crypto.randomUUID(),
+      senderId: 'system',
+      senderName: 'System',
+      text: `${drawer.name} is drawing now!`,
+      type: 'DRAWER_ANNOUNCEMENT',
+      timestamp: Date.now(),
+    };
+    room.addChatMessage(drawingNowMsg);
+    io.to(room.id).emit('chat_message', drawingNowMsg);
+  }
 
   // Emitted to the Drawer: Full plaintext word + drawerId
   if (drawer) {
@@ -360,6 +394,16 @@ export async function triggerWordSelection(io: SocketIOServer, roomId: string) {
     console.log(`[Game] Room ${roomId} match completed all rounds! Finalizing game...`);
     await finalizeMatch(io, roomId);
     return;
+  }
+
+  // Broadcast round_start to all players at the beginning of each new round (Round 1, Round 2, etc.)
+  if (turnManager.currentTurn === 1) {
+    console.log(`[Game] Room ${roomId}: Starting Round ${turnManager.currentRound} of ${room.settings.totalRounds}`);
+    io.to(room.id).emit('round_start', {
+      roomId: room.id,
+      roundNumber: turnManager.currentRound,
+      totalRounds: room.settings.totalRounds,
+    });
   }
 
   const drawer = room.getPlayer(nextTurn.drawerId || '');

@@ -123,6 +123,8 @@ export type ChatMessageType =
   | 'PLAYER_JOINED'
   | 'PLAYER_LEFT'
   | 'ROOM_OWNER'
+  | 'DRAWER_ANNOUNCEMENT'
+  | 'WORD_REVEAL'
   | 'SYSTEM_INFO';
 
 export interface ChatMessage {

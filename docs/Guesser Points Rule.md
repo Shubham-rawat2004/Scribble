@@ -50,13 +50,19 @@ $$\mathbf{\text{Guesser Total Points}} = \min(500, \text{BasePoints} + \text{Ord
 
 ## 3. Drawer (Artist) Points Distribution Formula
 
-The drawer's reward reflects the **drawing's clarity** and **room-wide solver rate**.
+The drawer's reward reflects the **drawing's clarity**, **room-wide solver rate**, and is scaled with authentic Skribbl proportions ($\text{DRAWER\_SCALE\_FACTOR} = 0.6$).
 
-### Why the Old System Was Inaccurate:
-Previously, the drawer was awarded $500 \times (\text{solvers} / \text{totalGuessers})$ regardless of time. Even if everyone guessed at the very last second, the drawer still received maximum points (500 pts), ignoring drawing speed.
+### Why Drawer Scaling Is Necessary (Preventing 2-Player Dead-Ties):
+In a 2-player match, without scaling ($\text{DRAWER\_SCALE\_FACTOR} = 1.0$):
+* When Player A draws: Player A gets $B_1$, Player B gets $B_1 + 50$.
+* When Player B draws: Player B gets $B_2$, Player A gets $B_2 + 50$.
+* Over the round: Player A has $B_1 + B_2 + 50$ and Player B has $B_1 + 50 + B_2$ — **identically equal scores**!
+With authentic $0.6\times$ scaling:
+$$\text{Score}(A) - \text{Score}(B) = (1 - 0.6)(B_2 - B_1) = 0.4(B_2 - B_1)$$
+The faster guesser legitimately wins!
 
 ### Authentic Speed-Weighted Drawer Formula:
-When the drawing turn ends, the drawer's score is computed using the **average speed/points of all solvers**, scaled by the **fraction of eligible guessers** who solved the drawing:
+When the drawing turn ends, the drawer's score is computed using the **average speed/points of all solvers**, scaled by the **fraction of eligible guessers** who solved the drawing and the $0.6$ drawer multiplier:
 
 $$\text{AverageSolverPoints} = \frac{\sum_{i=1}^{S} \text{BasePoints}_i}{S}$$
 
@@ -64,7 +70,7 @@ $$\text{SolverRatio} = \frac{S}{N} \quad \begin{cases} S = \text{Count of player
 
 $$\mathbf{\text{Drawer Total Points}} = \begin{cases}
 0 & \text{if } S = 0 \text{ (no one guessed)} \\
-\text{round}\left(\text{AverageSolverPoints} \times \text{SolverRatio}\right) & \text{if } S > 0
+\text{round}\left(\text{AverageSolverPoints} \times \text{SolverRatio} \times 0.6\right) & \text{if } S > 0
 \end{cases}$$
 
 ### Drawer Points Scenarios:
@@ -72,18 +78,18 @@ $$\mathbf{\text{Drawer Total Points}} = \begin{cases}
 #### Scenario A: High-Quality Drawing (Fast Guesses, Full Room Solve)
 * 3 out of 3 guessers solve the word within the first 15 seconds.
 * Guessers average 360 base points.
-* $\text{Drawer Points} = 360 \times \frac{3}{3} = \mathbf{360\text{ pts}}$.
+* $\text{Drawer Points} = 360 \times \frac{3}{3} \times 0.6 = \mathbf{216\text{ pts}}$.
 * **Result:** Drawer is heavily rewarded for drawing clearly and quickly!
 
 #### Scenario B: Unclear / Slow Drawing (Late Guesses, Full Room Solve)
 * 3 out of 3 guessers struggle and solve it in the final 5 seconds.
 * Guessers average 75 base points.
-* $\text{Drawer Points} = 75 \times \frac{3}{3} = \mathbf{75\text{ pts}}$.
+* $\text{Drawer Points} = 75 \times \frac{3}{3} \times 0.6 = \mathbf{45\text{ pts}}$.
 * **Result:** Drawer receives modest points because the drawing was confusing and slow.
 
 #### Scenario C: Partial Solve (Only 1 out of 3 Players Guessed)
 * Only 1 player managed to guess (in 30s, 225 base points).
-* $\text{Drawer Points} = 225 \times \frac{1}{3} = \mathbf{75\text{ pts}}$.
+* $\text{Drawer Points} = 225 \times \frac{1}{3} \times 0.6 = \mathbf{45\text{ pts}}$.
 
 #### Scenario D: Zero Solvers
 * Nobody guessed the word before the timer reached 0s.
@@ -91,9 +97,9 @@ $$\mathbf{\text{Drawer Total Points}} = \begin{cases}
 
 #### Scenario E: 2-Player Match (1 Drawer, 1 Guesser)
 * $\text{SolverRatio} = 1 / 1 = 1.0$.
-* Drawer points equal the base score of the single guesser:
-  * Guessed at 75s left: Drawer receives **~380 pts**.
-  * Guessed at 10s left: Drawer receives **~90 pts**.
+* Drawer points equal $60\%$ of the base score of the single guesser:
+  * Guessed at 75s left: Drawer receives **~228 pts**.
+  * Guessed at 10s left: Drawer receives **~54 pts**.
 
 ---
 
@@ -121,7 +127,7 @@ If two or more players have the exact same total score:
 3. **Tertiary Tie-Breaker:** Earliest player joined timestamp in room.
 
 ### 4. Default Win (Player Disconnection Rule)
-If all other active players leave or disconnect mid-game, leaving only **one active player**:
+If all other active players leave or disconnect mid-game, leaving only **one active player** after the reconnection grace period expires:
 * The match immediately transitions to `game_over`.
 * The sole remaining player is declared **Winner by Default**, regardless of score.
 * The message displayed is:
@@ -136,7 +142,8 @@ If all other active players leave or disconnect mid-game, leaving only **one act
 | :--- | :--- | :--- |
 | **Guesser Max Score** | 550 pts (Unbounded above 500) | **450–500 pts max** (Capped cleanly) |
 | **Guesser Min Score** | 100+ pts even at 0s remaining | **~50 pts** for last-second saves |
-| **Drawer Speed Factor** | Ignored (flat $500 \times \text{ratio}$) | **Proportional to guesser speed** |
-| **Slow Drawing Penalty** | Drawer still got 500 pts at 1s left | Drawer gets lower score (~75 pts) |
+| **Drawer Speed Factor** | Ignored (flat $500 \times \text{ratio}$) | **Proportional to guesser speed $\times 0.6$** |
+| **Slow Drawing Penalty** | Drawer still got 500 pts at 1s left | Drawer gets lower score (~45 pts) |
 | **Zero Solvers Penalty** | 0 pts | **0 pts** |
+| **2-Player Ties** | Forced mathematical tie every match | **Faster guesser wins cleanly** |
 | **Winner Determination** | Highest cumulative points | **Highest cumulative points + tie-breakers** |
