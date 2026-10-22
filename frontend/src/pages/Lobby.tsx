@@ -468,61 +468,69 @@ export const Lobby: React.FC<LobbyProps> = ({
               })}
             </div>
 
-            {/* Action Zone: Host starts match; other players wait */}
-            <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-              {isHost ? (
-                <div>
-                  <button
-                    className="btn btn-primary"
-                    onClick={handleStartGame}
-                    disabled={starting || players.length < 2}
+            {/* Action Zone: Host starts match; guests wait only when not auto-starting */}
+            {(isHost || autoStartCountdown === null) && (
+              <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                {isHost ? (
+                  <div>
+                    <button
+                      className="btn btn-primary"
+                      onClick={handleStartGame}
+                      disabled={starting || players.length < 2}
+                      style={{
+                        width: '100%',
+                        padding: '0.9rem',
+                        fontSize: '1.1rem',
+                        opacity: players.length < 2 ? 0.6 : 1,
+                        cursor: players.length < 2 ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      <Play size={20} />
+                      {starting ? 'Starting Game...' : 'Start Game'}
+                    </button>
+                    {players.length < 2 ? (
+                      <p style={{ textAlign: 'center', fontSize: '0.85rem', color: '#64748b', marginTop: '0.5rem' }}>
+                        Waiting for at least 2 players to start...
+                      </p>
+                    ) : (
+                      <p style={{ textAlign: 'center', fontSize: '0.85rem', color: '#16a34a', fontWeight: 600, marginTop: '0.5rem' }}>
+                        ✅ Ready! Click "Start Game" when you're ready to begin.
+                      </p>
+                    )}
+                  </div>
+                ) : autoStartCountdown !== null ? null : (
+                  <div
                     style={{
-                      width: '100%',
-                      padding: '0.9rem',
-                      fontSize: '1.1rem',
-                      opacity: players.length < 2 ? 0.6 : 1,
-                      cursor: players.length < 2 ? 'not-allowed' : 'pointer',
+                      background: '#f1f5f9',
+                      padding: '1rem',
+                      borderRadius: '10px',
+                      textAlign: 'center',
+                      color: '#475569',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '0.6rem',
+                      fontSize: '0.95rem',
+                      fontWeight: 600,
+                      border: '1.5px solid #cbd5e1',
                     }}
                   >
-                    <Play size={20} />
-                    {starting ? 'Starting Game...' : 'Start Game'}
-                  </button>
-                  {players.length < 2 ? (
-                    <p style={{ textAlign: 'center', fontSize: '0.85rem', color: '#64748b', marginTop: '0.5rem' }}>
-                      Waiting for at least 2 players to start...
-                    </p>
-                  ) : (
-                    <p style={{ textAlign: 'center', fontSize: '0.85rem', color: '#16a34a', fontWeight: 600, marginTop: '0.5rem' }}>
-                      ✅ Ready! Click "Start Game" when you're ready to begin.
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div
-                  style={{
-                    background: '#f1f5f9',
-                    padding: '1rem',
-                    borderRadius: '10px',
-                    textAlign: 'center',
-                    color: '#475569',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '0.6rem',
-                    fontSize: '0.95rem',
-                    fontWeight: 600,
-                    border: '1.5px solid #cbd5e1',
-                  }}
-                >
-                  <Clock size={19} className="animate-spin" color="#2563eb" />
-                  <span>
-                    {players.length < 2
-                      ? 'Waiting for at least 2 players before host can start...'
-                      : <>Waiting for host (<b>{room.hostName}</b>) to start the game...</>}
-                  </span>
-                </div>
-              )}
-            </div>
+                    <Clock size={19} className="animate-spin" color="#2563eb" />
+                    <span>
+                      {players.length < 2 ? (
+                        room.settings.isPrivate
+                          ? 'Waiting for at least 2 players before host can start...'
+                          : 'Waiting for another player to join public match...'
+                      ) : (
+                        room.settings.isPrivate
+                          ? <>Waiting for host (<b>{room.hostName}</b>) to start the game...</>
+                          : 'Waiting for match to begin...'
+                      )}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Match Rules Summary Card */}
