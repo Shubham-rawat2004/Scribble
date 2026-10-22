@@ -137,9 +137,7 @@ export function registerChatHandlers(io: SocketIOServer, socket: Socket) {
 
           // 3. Broadcast green celebration banner to room (hiding exact word)
           const isFirstGuesser = guessOrder === 1;
-          const broadcastText = isFirstGuesser
-            ? `🥇 ${player.name} guessed the word first! (+${scoreResult.totalPoints} pts)`
-            : `${player.name} guessed the word! (+${scoreResult.totalPoints} pts)`;
+          const broadcastText = `${player.name} guessed the word!`;
 
           const successMsg: ChatMessageDTO = {
             id: msgId,

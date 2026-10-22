@@ -309,6 +309,18 @@ export async function executeStartDrawingTurn(
         drawerName: drawer?.name,
       });
 
+      // Announce revealed word in chat stream (Skribbl authentic experience)
+      const wordRevealMsg = {
+        id: crypto.randomUUID(),
+        senderId: 'system',
+        senderName: 'System',
+        text: `The word was '${secretWord}'`,
+        type: 'WORD_REVEAL',
+        timestamp: Date.now(),
+      };
+      room.addChatMessage(wordRevealMsg);
+      io.to(room.id).emit('chat_message', wordRevealMsg);
+
       // Wait 4 seconds for players to review turn summary scoreboard, then advance
       const postTimer = setTimeout(() => {
         if (room.status === 'PLAYING') {
@@ -318,6 +330,20 @@ export async function executeStartDrawingTurn(
       turnManager.setPostTurnTimeout(postTimer);
     }
   );
+
+  // Broadcast drawing player announcement in chat to all players: "Rahul is drawing now!"
+  if (drawer) {
+    const drawingNowMsg = {
+      id: crypto.randomUUID(),
+      senderId: 'system',
+      senderName: 'System',
+      text: `${drawer.name} is drawing now!`,
+      type: 'DRAWER_ANNOUNCEMENT',
+      timestamp: Date.now(),
+    };
+    room.addChatMessage(drawingNowMsg);
+    io.to(room.id).emit('chat_message', drawingNowMsg);
+  }
 
   // Emitted to the Drawer: Full plaintext word + drawerId
   if (drawer) {

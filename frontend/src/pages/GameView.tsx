@@ -13,7 +13,7 @@ import { GameOverModal } from '../components/GameOverModal';
 import { StrokeReplayModal } from '../components/StrokeReplayModal';
 import { SkribblAlarmClock } from '../components/SkribblAlarmClock';
 import { DrawStroke } from '../types/canvas';
-import { LogOut, Pencil, Eye, Trophy, CheckCircle2, UserX, UserMinus, Film, ChevronUp, ChevronDown, Volume2, VolumeX } from 'lucide-react';
+import { LogOut, Pencil, Eye, Trophy, CheckCircle2, UserX, UserMinus, Film, ChevronUp, ChevronDown, Volume2, VolumeX, Crown } from 'lucide-react';
 import { soundEffects } from '../services/soundEffects';
 import { RoundAnnouncementModal } from '../components/RoundAnnouncementModal';
 
@@ -102,8 +102,6 @@ export const GameView: React.FC<GameViewProps> = ({
     applyRemoteUndo,
     applyRemoteClear,
     hydrateStrokes,
-    totalPoints,
-    strokes,
   } = useCanvas({
     readOnly: !isDrawer,
     initialTool: 'brush',
@@ -671,7 +669,7 @@ export const GameView: React.FC<GameViewProps> = ({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: '175px 1fr 300px',
+          gridTemplateColumns: '240px 1fr 300px',
           gap: '1rem',
           alignItems: 'start',
         }}
@@ -708,7 +706,6 @@ export const GameView: React.FC<GameViewProps> = ({
                 const isSelf = p.id === currentPlayer.id;
                 const isGuessed = guessedPlayerIds.has(p.id);
                 const popupPoints = scorePopups.get(p.id);
-                const rankBadge = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
 
                 return (
                   <div
@@ -716,119 +713,183 @@ export const GameView: React.FC<GameViewProps> = ({
                     style={{
                       display: 'flex',
                       alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '0.45rem 0.65rem',
+                      borderRadius: '6px',
+                      background: isTurnDrawer
+                        ? '#fefce8'
+                        : isGuessed
+                        ? '#f0fdf4'
+                        : isSelf
+                        ? '#eff6ff'
+                        : idx % 2 === 0
+                        ? '#ffffff'
+                        : '#f8fafc',
+                      border: isTurnDrawer
+                        ? '2px solid #eab308'
+                        : isGuessed
+                        ? '2px solid #22c55e'
+                        : isSelf
+                        ? '1.5px solid #93c5fd'
+                        : '1px solid #e2e8f0',
+                      boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
                       gap: '0.5rem',
-                      padding: '0.45rem 0.6rem',
-                      borderRadius: '8px',
-                      background: isGuessed ? '#f0fdf4' : isTurnDrawer ? '#fefce8' : isSelf ? '#eff6ff' : '#f8fafc',
-                      border: isGuessed ? '2px solid #22c55e' : isTurnDrawer ? '2px solid #eab308' : isSelf ? '1.5px solid #3b82f6' : '1px solid #e2e8f0',
-                      transition: 'all 0.25s ease',
+                      transition: 'all 0.2s ease',
                     }}
                   >
-                    {/* Rank medal / number */}
-                    <span style={{ fontWeight: 800, fontSize: '0.85rem', color: '#64748b', width: '20px', textAlign: 'center' }}>
-                      {rankBadge}
-                    </span>
-
-                    {/* Player Avatar */}
-                    <SkribblAvatar avatarId={p.avatarId} size={32} />
-
-                    {/* Player Name and Score */}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                        <span>{p.name} {isSelf && '(You)'}</span>
-                        {!p.isConnected && (
-                          <span
-                            style={{
-                              fontSize: '0.65rem',
-                              backgroundColor: '#fef3c7',
-                              color: '#b45309',
-                              padding: '0.05rem 0.35rem',
-                              borderRadius: '4px',
-                              fontWeight: 800,
-                              border: '1px solid #fde68a',
-                            }}
-                          >
-                            ⚠️ Reconnecting...
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#16a34a' }}>
-                          {p.score || 0} pts
+                    {/* Left: Rank Number & Role/Host Icon (Screenshot 3) */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: '28px',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontWeight: 900,
+                          fontSize: '0.95rem',
+                          color: '#1e293b',
+                          lineHeight: 1.1,
+                        }}
+                      >
+                        #{idx + 1}
+                      </span>
+                      {isTurnDrawer ? (
+                        <span title="Drawing now!" style={{ color: '#2563eb', display: 'inline-flex', marginTop: '2px' }}>
+                          <Pencil size={15} />
                         </span>
-                        {/* Live Score Increment Popup */}
-                        {popupPoints !== undefined && (
-                          <span
-                            style={{
-                              fontSize: '0.72rem',
-                              fontWeight: 900,
-                              color: '#15803d',
-                              backgroundColor: '#dcfce7',
-                              padding: '0.1rem 0.35rem',
-                              borderRadius: '4px',
-                              border: '1px solid #86efac',
-                            }}
-                          >
-                            +{popupPoints}
-                          </span>
-                        )}
-                      </div>
+                      ) : isGuessed ? (
+                        <span title="Guessed the word!" style={{ color: '#16a34a', display: 'inline-flex', marginTop: '2px' }}>
+                          <CheckCircle2 size={15} />
+                        </span>
+                      ) : p.isHost ? (
+                        <span title="Room Owner" style={{ color: '#eab308', display: 'inline-flex', marginTop: '2px' }}>
+                          <Crown size={15} />
+                        </span>
+                      ) : null}
                     </div>
 
-                    {/* Drawer Pencil or Guessed Checkmark Badge */}
-                    {isTurnDrawer && (
-                      <span title="Drawing now!" style={{ color: '#eab308', display: 'inline-flex' }}>
-                        <Pencil size={15} />
-                      </span>
-                    )}
-                    {isGuessed && (
-                      <span title="Guessed the word!" style={{ color: '#16a34a', display: 'inline-flex' }}>
-                        <CheckCircle2 size={15} />
-                      </span>
-                    )}
-
-                    {/* Moderation Controls: Host kick vs Democratic votekick */}
-                    {currentPlayer.isHost && !p.isHost && (
-                      <button
-                        type="button"
-                        title={`Kick ${p.name}`}
-                        onClick={() => handleKickPlayer(p.id, p.name)}
+                    {/* Middle: Prominent Player Name & Points (Screenshot 3) */}
+                    <div
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <div
                         style={{
-                          background: 'none',
-                          border: 'none',
-                          color: '#ef4444',
-                          cursor: 'pointer',
-                          padding: '0.2rem',
-                          borderRadius: '4px',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          marginLeft: '0.25rem',
+                          fontWeight: 800,
+                          fontSize: '0.95rem',
+                          color: isSelf ? '#2563eb' : '#0f172a',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          lineHeight: 1.25,
                         }}
+                        title={`${p.name}${isSelf ? ' (You)' : ''}`}
                       >
-                        <UserX size={15} />
-                      </button>
-                    )}
+                        {p.name} {isSelf && '(You)'}
+                      </div>
 
-                    {!currentPlayer.isHost && !isSelf && (
-                      <button
-                        type="button"
-                        title={`Vote to kick ${p.name}`}
-                        onClick={() => handleVoteKick(p.id, p.name)}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: '#ea580c',
-                          cursor: 'pointer',
-                          padding: '0.2rem',
-                          borderRadius: '4px',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          marginLeft: '0.25rem',
-                        }}
-                      >
-                        <UserMinus size={15} />
-                      </button>
-                    )}
+                      {/* Reconnecting Badge or Score */}
+                      {!p.isConnected ? (
+                        <span
+                          style={{
+                            fontSize: '0.65rem',
+                            backgroundColor: '#fef3c7',
+                            color: '#b45309',
+                            padding: '0.05rem 0.35rem',
+                            borderRadius: '4px',
+                            fontWeight: 800,
+                            border: '1px solid #fde68a',
+                            width: 'fit-content',
+                            marginTop: '2px',
+                          }}
+                        >
+                          ⚠️ Reconnecting...
+                        </span>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '1px' }}>
+                          <span
+                            style={{
+                              fontSize: '0.82rem',
+                              fontWeight: 600,
+                              color: isSelf ? '#3b82f6' : '#64748b',
+                            }}
+                          >
+                            {p.score || 0} points
+                          </span>
+                          {/* Live Score Increment Popup */}
+                          {popupPoints !== undefined && (
+                            <span
+                              style={{
+                                fontSize: '0.72rem',
+                                fontWeight: 900,
+                                color: '#15803d',
+                                backgroundColor: '#dcfce7',
+                                padding: '0.05rem 0.3rem',
+                                borderRadius: '4px',
+                                border: '1px solid #86efac',
+                              }}
+                            >
+                              +{popupPoints}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Right: Skribbl Avatar + Moderation Controls (Screenshot 3) */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }}>
+                      <SkribblAvatar avatarId={p.avatarId} size={42} />
+
+                      {currentPlayer.isHost && !p.isHost && (
+                        <button
+                          type="button"
+                          title={`Kick ${p.name}`}
+                          onClick={() => handleKickPlayer(p.id, p.name)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#ef4444',
+                            cursor: 'pointer',
+                            padding: '0.15rem',
+                            borderRadius: '4px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <UserX size={14} />
+                        </button>
+                      )}
+
+                      {!currentPlayer.isHost && !isSelf && (
+                        <button
+                          type="button"
+                          title={`Vote to kick ${p.name}`}
+                          onClick={() => handleVoteKick(p.id, p.name)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#ea580c',
+                            cursor: 'pointer',
+                            padding: '0.15rem',
+                            borderRadius: '4px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <UserMinus size={14} />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })}
@@ -955,47 +1016,6 @@ export const GameView: React.FC<GameViewProps> = ({
               </span>
             </div>
           )}
-
-          {/* Real-Time Networking Telemetry Bar */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '0.4rem 0.75rem',
-              background: 'rgba(15, 23, 42, 0.75)',
-              borderRadius: '8px',
-              color: '#e2e8f0',
-              fontSize: '0.75rem',
-            }}
-          >
-            <span>⚡ Match Sync: <b>Turn Active</b> ({strokes.length} strokes, {totalPoints} points)</span>
-            <span>Channel: <code>room_{room.id}</code></span>
-            {/* Solo Testing Helper: Switch Role preview */}
-            <button
-              type="button"
-              onClick={() => {
-                const otherPlayer = players.find((p) => p.id !== currentDrawerId);
-                if (otherPlayer) {
-                  setCurrentDrawerId(otherPlayer.id);
-                } else {
-                  setCurrentDrawerId((prev) => (prev === currentPlayer.id ? 'test_guesser_id' : currentPlayer.id));
-                }
-              }}
-              style={{
-                background: 'rgba(255, 255, 255, 0.15)',
-                border: 'none',
-                color: '#38bdf8',
-                borderRadius: '4px',
-                padding: '0.2rem 0.5rem',
-                cursor: 'pointer',
-                fontSize: '0.72rem',
-                fontWeight: 700,
-              }}
-            >
-              🔄 Toggle Role (Demo Drawer / Guesser View)
-            </button>
-          </div>
         </div>
 
         {/* Right Column: Interactive Real-Time Game Chat & Guess Verification */}
