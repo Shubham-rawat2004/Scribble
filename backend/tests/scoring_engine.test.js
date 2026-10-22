@@ -30,12 +30,12 @@ assert.strictEqual(slowGuess.orderBonus, 10, '3rd place bonus should be 10');
 assert.strictEqual(slowGuess.totalPoints, 60, 'Slow guess total points should be 60');
 console.log('✅ Slow guess (0s/80s, 3rd place):', slowGuess);
 
-// Drawer speed-weighted rewards
+// Drawer speed-weighted rewards (scaled by 0.6 factor to prevent 2-player ties)
 assert.strictEqual(ScoringEngine.calculateDrawerScore([], 3), 0, '0 solvers must yield 0 drawer points');
-assert.strictEqual(ScoringEngine.calculateDrawerScore([350], 1), 350, '1 fast solver (350) out of 1 guesser must yield 350 drawer points');
-assert.strictEqual(ScoringEngine.calculateDrawerScore([100], 1), 100, '1 slow solver (100) out of 1 guesser must yield 100 drawer points');
-assert.strictEqual(ScoringEngine.calculateDrawerScore([300, 300], 2), 300, '2 solvers (avg 300) out of 2 guessers must yield 300 drawer points');
-assert.strictEqual(ScoringEngine.calculateDrawerScore([300], 2), 150, '1 solver (300) out of 2 guessers must yield 150 drawer points (half ratio)');
+assert.strictEqual(ScoringEngine.calculateDrawerScore([350], 1), Math.round(350 * 0.6), '1 fast solver (350) out of 1 guesser must yield 210 drawer points (60%)');
+assert.strictEqual(ScoringEngine.calculateDrawerScore([100], 1), Math.round(100 * 0.6), '1 slow solver (100) out of 1 guesser must yield 60 drawer points (60%)');
+assert.strictEqual(ScoringEngine.calculateDrawerScore([300, 300], 2), Math.round(300 * 0.6), '2 solvers (avg 300) out of 2 guessers must yield 180 drawer points (60%)');
+assert.strictEqual(ScoringEngine.calculateDrawerScore([300], 2), Math.round(150 * 0.6), '1 solver (300) out of 2 guessers must yield 90 drawer points (half ratio * 60%)');
 console.log('✅ Speed-weighted drawer points formula verified successfully!');
 
 // --- 2. Multi-Client Socket Real-Time Flow & Leaderboard Sync ---
@@ -148,11 +148,11 @@ function setupGameFlow() {
       assert.ok(bobPointsEarned > charliePointsEarned, `Bob (${bobPointsEarned}) must earn more points than Charlie (${charliePointsEarned})`);
       console.log(`✅ Speed & order bonus verified: Bob (${bobPointsEarned} pts) > Charlie (${charliePointsEarned} pts)`);
 
-      // Verify Drawer Alice got speed-weighted drawer points because 2/2 solved quickly
+      // Verify Drawer Alice got speed-weighted drawer points because 2/2 solved quickly (400 * 0.6 = 240)
       const aliceSummary = endData.roundScores.find(r => r.playerId === alicePlayerId);
       assert.ok(aliceSummary);
-      assert.strictEqual(aliceSummary.pointsEarned, 400, 'Drawer Alice must receive 400 points (2/2 fast solvers)');
-      console.log('✅ Speed-weighted drawer points verified: Alice received 400 drawer points!');
+      assert.strictEqual(aliceSummary.pointsEarned, 240, 'Drawer Alice must receive 240 points (2/2 fast solvers * 0.6)');
+      console.log('✅ Speed-weighted drawer points verified: Alice received 240 drawer points!');
 
       // Step D: Verify MySQL database persistence
       console.log('\n--- Action D: Verifying MySQL database persistence ---');

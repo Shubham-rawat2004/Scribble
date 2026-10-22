@@ -116,6 +116,15 @@ export async function handlePlayerLeftGameCheck(
 ) {
   if (room.status !== 'PLAYING') return;
 
+  const roomManager = RoomManager.getInstance();
+
+  // If any player in the room is currently in their reconnection grace period, do NOT terminate!
+  const hasPlayerInGrace = room.getPlayerList().some((p) => roomManager.isPlayerInGrace(p.id));
+  if (hasPlayerInGrace) {
+    console.log(`[Game] Room ${room.id} has disconnected player(s) in grace period. Deferring auto-termination.`);
+    return;
+  }
+
   const activePlayers = room.getActivePlayers();
 
   // If active player count drops below 2, immediately terminate the match!
@@ -125,7 +134,6 @@ export async function handlePlayerLeftGameCheck(
   }
 
   // Active players count is >= 2.
-  const roomManager = RoomManager.getInstance();
   const turnManager = roomManager.getTurnManager(room.id);
   if (!turnManager) return;
 
@@ -360,6 +368,16 @@ export async function triggerWordSelection(io: SocketIOServer, roomId: string) {
     console.log(`[Game] Room ${roomId} match completed all rounds! Finalizing game...`);
     await finalizeMatch(io, roomId);
     return;
+  }
+
+  // Broadcast round_start to all players at the beginning of each new round (Round 1, Round 2, etc.)
+  if (turnManager.currentTurn === 1) {
+    console.log(`[Game] Room ${roomId}: Starting Round ${turnManager.currentRound} of ${room.settings.totalRounds}`);
+    io.to(room.id).emit('round_start', {
+      roomId: room.id,
+      roundNumber: turnManager.currentRound,
+      totalRounds: room.settings.totalRounds,
+    });
   }
 
   const drawer = room.getPlayer(nextTurn.drawerId || '');

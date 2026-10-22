@@ -5,6 +5,7 @@ import {
   JoinRoomPayload,
   JoinRoomResponse,
   PlayerDTO,
+  RoomDTO,
   RoomSettings,
   StartGameResponse,
 } from '../types/room.js';
@@ -669,7 +670,7 @@ export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
     'leave_room',
     async (data?: { roomId?: string }, callback?: (res: { success: boolean }) => void) => {
       try {
-        const result = await roomManager.handleDisconnect(socket.id);
+        const result = await roomManager.handleDisconnect(socket.id, true);
         if (result.room && result.player && result.wasRemoved) {
           socket.leave(result.room.id);
           const remainingPlayers = result.room.getPlayerList().map((p) => p.toDTO());
@@ -725,47 +726,236 @@ export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
   /**
    * Socket disconnect event: notifies room participants and updates rosters.
    */
-  socket.on('disconnect', async () => {
-    try {
-      const result = await roomManager.handleDisconnect(socket.id);
-      if (result.room && result.player && result.wasRemoved) {
-        const remainingPlayers = result.room.getPlayerList().map((p) => p.toDTO());
-        io.to(result.room.id).emit('player_left', {
-          playerId: result.player.id,
-          players: remainingPlayers,
-          newHostId: result.newHost?.id,
-        });
+  /**
+   * Event: reconnect_player
+   * Re-associates a reconnected socket with an existing in-memory player during an active game.
+   */
+  socket.on(
+    'reconnect_player',
+    async (
+      data: { roomId: string; playerId: string },
+      callback?: (res: { success: boolean; error?: string; room?: RoomDTO; player?: PlayerDTO }) => void
+    ) => {
+      try {
+        if (!data || !data.roomId || !data.playerId) {
+          if (callback) callback({ success: false, error: 'Invalid parameters.' });
+          return;
+        }
 
-        // Announce player left in room chat
-        const leaveMsg = {
+        const room = roomManager.getRoom(data.roomId);
+        if (!room) {
+          if (callback) callback({ success: false, error: 'Room not found.' });
+          return;
+        }
+
+        const player = room.getPlayer(data.playerId);
+        if (!player) {
+          if (callback) callback({ success: false, error: 'Player session expired.' });
+          return;
+        }
+
+        // 1. Cancel the reconnection grace timer
+        roomManager.cancelDisconnectGrace(player.id);
+
+        // 2. Re-attach socket to player
+        player.updateSocketId(socket.id);
+        player.setConnectionStatus(true);
+        roomManager.registerSocket(socket.id, room.id, player.id);
+
+        await socket.join(room.id);
+
+        const turnManager = roomManager.getTurnManager(room.id);
+        const isSolvedOrDrawer = Boolean(
+          turnManager &&
+            (turnManager.hasPlayerGuessed(player.id) || turnManager.currentDrawerId === player.id)
+        );
+        if (isSolvedOrDrawer) {
+          socket.join(`room_${room.id}_solved`);
+        }
+
+        console.log(`[Reconnection] Player ${player.name} (${player.id}) reconnected to room ${room.id} with socket ${socket.id}`);
+
+        // 3. Announce in room chat
+        const reconnectedMsg = {
           id: crypto.randomUUID(),
           senderId: 'system',
           senderName: 'System',
-          text: `${result.player.name} left the room!`,
-          type: 'PLAYER_LEFT',
+          text: `✅ ${player.name} reconnected to the game!`,
+          type: 'SYSTEM_INFO',
           timestamp: Date.now(),
         };
-        result.room.addChatMessage(leaveMsg);
-        io.to(result.room.id).emit('chat_message', leaveMsg);
+        room.addChatMessage(reconnectedMsg);
+        io.to(room.id).emit('chat_message', reconnectedMsg);
 
-        if (result.newHost) {
-          const newHostMsg = {
+        // 4. Broadcast updated roster to room
+        io.to(room.id).emit('player_connection_changed', {
+          playerId: player.id,
+          isConnected: true,
+          players: room.getPlayerList().map((p) => p.toDTO()),
+        });
+
+        // 5. Hydrate canvas strokes for reconnected player
+        socket.emit('canvas_init', {
+          roomId: room.id,
+          strokes: room.getStrokeHistory(),
+        });
+
+        // 6. Resynchronize active turn state
+        if (turnManager) {
+          if (turnManager.turnPhase === 'WORD_SELECTION') {
+            if (turnManager.currentDrawerId === player.id) {
+              socket.emit('word_selection_start', {
+                roomId: room.id,
+                drawerId: player.id,
+                words: turnManager.wordOptions,
+                durationSeconds: 15,
+              });
+            } else {
+              const drawer = room.getPlayer(turnManager.currentDrawerId || '');
+              socket.emit('drawer_choosing_word', {
+                roomId: room.id,
+                drawerId: drawer?.id,
+                drawerName: drawer?.name || 'Drawer',
+                durationSeconds: 15,
+              });
+            }
+          } else if (turnManager.turnPhase === 'DRAWING') {
+            const isDrawer = turnManager.currentDrawerId === player.id;
+            socket.emit('turn_start', {
+              role: isDrawer ? 'DRAWER' : 'GUESSER',
+              drawerId: turnManager.currentDrawerId,
+              secretWord: isDrawer ? turnManager.secretWord : undefined,
+              wordMask: !isDrawer ? HintManager.formatMaskString(turnManager.currentMask) : undefined,
+              wordLength: !isDrawer ? (turnManager.secretWord ? turnManager.secretWord.length : 0) : undefined,
+              drawTimeSeconds: turnManager.timeRemaining,
+              currentRound: turnManager.currentRound,
+              totalRounds: room.settings.totalRounds,
+              currentTurn: turnManager.currentTurn,
+              totalTurnsInRound: room.players.size,
+              gameMode: room.settings.gameMode || 'Normal',
+            });
+          }
+        }
+
+        if (callback) {
+          callback({
+            success: true,
+            room: room.toDTO(),
+            player: player.toDTO(),
+          });
+        }
+      } catch (err) {
+        console.error('[Socket.IO] Error in reconnect_player:', err);
+        if (callback) callback({ success: false, error: 'Reconnection failed.' });
+      }
+    }
+  );
+
+  /**
+   * Socket disconnect event: handles 20s grace period during PLAYING matches,
+   * preventing premature game termination from mobile tab-switching or momentary network blips.
+   */
+  socket.on('disconnect', async () => {
+    try {
+      const result = await roomManager.handleDisconnect(socket.id, false);
+      if (result.room && result.player) {
+        if (result.isGracePeriod) {
+          const roomId = result.room.id;
+          const playerId = result.player.id;
+          const playerName = result.player.name;
+
+          // Announce in room chat: "[Player] disconnected. Waiting 20s to reconnect..."
+          const graceMsg = {
             id: crypto.randomUUID(),
             senderId: 'system',
             senderName: 'System',
-            text: `${result.newHost.name} is now the room owner!`,
-            type: 'ROOM_OWNER',
-            timestamp: Date.now() + 1,
+            text: `⚠️ ${playerName} disconnected. Waiting 20s for them to reconnect...`,
+            type: 'SYSTEM_INFO',
+            timestamp: Date.now(),
           };
-          result.room.addChatMessage(newHostMsg);
-          io.to(result.room.id).emit('chat_message', newHostMsg);
+          result.room.addChatMessage(graceMsg);
+          io.to(roomId).emit('chat_message', graceMsg);
+
+          // Broadcast player_connection_changed
+          io.to(roomId).emit('player_connection_changed', {
+            playerId,
+            isConnected: false,
+            players: result.room.getPlayerList().map((p) => p.toDTO()),
+          });
+
+          // Schedule 20-second grace timer
+          roomManager.startDisconnectGrace(
+            roomId,
+            playerId,
+            async () => {
+              console.log(`[GracePeriod] Grace period expired for ${playerName} in room ${roomId}.`);
+              const expireResult = await roomManager.permanentlyRemovePlayer(roomId, playerId);
+              if (expireResult.room) {
+                const remainingPlayers = expireResult.room.getPlayerList().map((p) => p.toDTO());
+                io.to(roomId).emit('player_left', {
+                  playerId,
+                  players: remainingPlayers,
+                  newHostId: expireResult.newHost?.id,
+                });
+
+                const timeoutMsg = {
+                  id: crypto.randomUUID(),
+                  senderId: 'system',
+                  senderName: 'System',
+                  text: `${playerName} failed to reconnect in time.`,
+                  type: 'PLAYER_LEFT',
+                  timestamp: Date.now(),
+                };
+                expireResult.room.addChatMessage(timeoutMsg);
+                io.to(roomId).emit('chat_message', timeoutMsg);
+
+                await handlePlayerLeftGameCheck(io, expireResult.room, playerId);
+              }
+            },
+            20000
+          );
+          return;
         }
 
-        checkAndTriggerPublicCountdown(io, result.room);
-        await handlePlayerLeftGameCheck(io, result.room, result.player.id);
-        console.log(
-          `[Socket.IO] Emitted player_left for ${result.player.name} in room ${result.room.id}. Remaining: ${remainingPlayers.length}`
-        );
+        if (result.wasRemoved) {
+          const remainingPlayers = result.room.getPlayerList().map((p) => p.toDTO());
+          io.to(result.room.id).emit('player_left', {
+            playerId: result.player.id,
+            players: remainingPlayers,
+            newHostId: result.newHost?.id,
+          });
+
+          // Announce player left in room chat
+          const leaveMsg = {
+            id: crypto.randomUUID(),
+            senderId: 'system',
+            senderName: 'System',
+            text: `${result.player.name} left the room!`,
+            type: 'PLAYER_LEFT',
+            timestamp: Date.now(),
+          };
+          result.room.addChatMessage(leaveMsg);
+          io.to(result.room.id).emit('chat_message', leaveMsg);
+
+          if (result.newHost) {
+            const newHostMsg = {
+              id: crypto.randomUUID(),
+              senderId: 'system',
+              senderName: 'System',
+              text: `${result.newHost.name} is now the room owner!`,
+              type: 'ROOM_OWNER',
+              timestamp: Date.now() + 1,
+            };
+            result.room.addChatMessage(newHostMsg);
+            io.to(result.room.id).emit('chat_message', newHostMsg);
+          }
+
+          checkAndTriggerPublicCountdown(io, result.room);
+          await handlePlayerLeftGameCheck(io, result.room, result.player.id);
+          console.log(
+            `[Socket.IO] Emitted player_left for ${result.player.name} in room ${result.room.id}. Remaining: ${remainingPlayers.length}`
+          );
+        }
       }
     } catch (err) {
       console.error('[Socket.IO] Error handling socket disconnect:', err);

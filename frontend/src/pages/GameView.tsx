@@ -13,7 +13,9 @@ import { GameOverModal } from '../components/GameOverModal';
 import { StrokeReplayModal } from '../components/StrokeReplayModal';
 import { SkribblAlarmClock } from '../components/SkribblAlarmClock';
 import { DrawStroke } from '../types/canvas';
-import { LogOut, Pencil, Eye, Trophy, CheckCircle2, UserX, UserMinus, Film, ChevronUp, ChevronDown } from 'lucide-react';
+import { LogOut, Pencil, Eye, Trophy, CheckCircle2, UserX, UserMinus, Film, ChevronUp, ChevronDown, Volume2, VolumeX } from 'lucide-react';
+import { soundEffects } from '../services/soundEffects';
+import { RoundAnnouncementModal } from '../components/RoundAnnouncementModal';
 
 interface GameViewProps {
   room: RoomDTO;
@@ -63,6 +65,10 @@ export const GameView: React.FC<GameViewProps> = ({
 
   // Phase 9 Game Over & Victory Podium State
   const [gameOverData, setGameOverData] = useState<GameOverPayload | null>(null);
+
+  // Round Announcement & Audio State
+  const [roundAnnouncement, setRoundAnnouncement] = useState<{ roundNumber: number; totalRounds: number } | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(soundEffects.isEnabled());
 
   // Stroke Replay State (Medium Priority Feature)
   const [lastTurnReplay, setLastTurnReplay] = useState<{
@@ -207,8 +213,31 @@ export const GameView: React.FC<GameViewProps> = ({
       }
     };
 
+    // Live connection status update (grace period or reconnected)
+    const onPlayerConnectionChanged = (data: { playerId: string; isConnected: boolean; players: PlayerDTO[] }) => {
+      if (data?.players) {
+        setPlayers(data.players);
+      }
+    };
+
+    // Seamless reconnection handler when socket drops and reconnects
+    const onSocketConnect = () => {
+      console.log('[GameView] Socket reconnected! Restoring player session in room...');
+      socket.emit(
+        'reconnect_player',
+        { roomId: room.id, playerId: currentPlayer.id },
+        (res?: { success: boolean; room?: RoomDTO; player?: PlayerDTO }) => {
+          if (res?.success && res.room) {
+            console.log('[GameView] Session restored successfully!');
+            setPlayers(res.room.players);
+          }
+        }
+      );
+    };
+
     // 3. Word Selection Listeners
     const onWordSelectionStart = (data: { words: WordChoice[]; durationSeconds: number; drawerId?: string }) => {
+      soundEffects.stopClockTick();
       if (data.drawerId) {
         setCurrentDrawerId(data.drawerId);
       } else {
@@ -224,6 +253,7 @@ export const GameView: React.FC<GameViewProps> = ({
     };
 
     const onDrawerChoosingWord = (data: { drawerId: string; drawerName: string; durationSeconds: number }) => {
+      soundEffects.stopClockTick();
       setCurrentDrawerId(data.drawerId);
       setDrawerChoosingBanner(`${data.drawerName} is choosing a word...`);
       setShowWordPicker(false);
@@ -275,13 +305,20 @@ export const GameView: React.FC<GameViewProps> = ({
       setWordMask(data.wordMask);
     };
 
-    // 6. Turn Countdown Tick
+    // 6. Turn Countdown Tick with Audio
     const onTurnTimerTick = (data: { timeRemainingSeconds: number }) => {
       setTimeRemaining(data.timeRemainingSeconds);
+      if (data.timeRemainingSeconds <= 10 && data.timeRemainingSeconds > 0) {
+        soundEffects.playClockTick(data.timeRemainingSeconds);
+      } else if (data.timeRemainingSeconds <= 0) {
+        soundEffects.stopClockTick();
+        soundEffects.playTimeUpSound();
+      }
     };
 
     // 7. Turn Ended (Time expired or all guessed)
     const onTurnEnd = (data: TurnEndPayload) => {
+      soundEffects.stopClockTick();
       setTurnEndedWord(data.secretWord);
       if (data.scores) {
         setPlayers(data.scores);
@@ -346,6 +383,7 @@ export const GameView: React.FC<GameViewProps> = ({
 
     // 10. Game Over & Return to Lobby Listeners
     const onGameOver = (data: GameOverPayload) => {
+      soundEffects.stopClockTick();
       setGameOverData(data);
       setTurnEndSummary(null);
       setShowWordPicker(false);
@@ -370,6 +408,8 @@ export const GameView: React.FC<GameViewProps> = ({
     socket.on('draw_undo', onDrawUndo);
     socket.on('canvas_clear', onCanvasClear);
     socket.on('canvas_init', onCanvasInit);
+    socket.on('connect', onSocketConnect);
+    socket.on('player_connection_changed', onPlayerConnectionChanged);
     socket.on('player_joined', onPlayerJoined);
     socket.on('player_left', onPlayerLeft);
     socket.on('kicked', onKicked);
@@ -385,6 +425,16 @@ export const GameView: React.FC<GameViewProps> = ({
     socket.on('player_guessed_correct', onPlayerGuessed);
     socket.on('score_update', onScoreUpdate);
     socket.on('game_over', onGameOver);
+
+    const onRoundStart = (data: { roundNumber: number; totalRounds: number }) => {
+      console.log(`[GameView] Round ${data.roundNumber} announced!`);
+      setRoundAnnouncement({
+        roundNumber: data.roundNumber,
+        totalRounds: data.totalRounds,
+      });
+      soundEffects.playRoundStartChime();
+    };
+    socket.on('round_start', onRoundStart);
     socket.on('returned_to_lobby', onReturnedToLobby);
 
     return () => {
@@ -394,6 +444,8 @@ export const GameView: React.FC<GameViewProps> = ({
       socket.off('draw_undo', onDrawUndo);
       socket.off('canvas_clear', onCanvasClear);
       socket.off('canvas_init', onCanvasInit);
+      socket.off('connect', onSocketConnect);
+      socket.off('player_connection_changed', onPlayerConnectionChanged);
       socket.off('player_joined', onPlayerJoined);
       socket.off('player_left', onPlayerLeft);
       socket.off('kicked', onKicked);
@@ -409,6 +461,8 @@ export const GameView: React.FC<GameViewProps> = ({
       socket.off('player_guessed_correct', onPlayerGuessed);
       socket.off('score_update', onScoreUpdate);
       socket.off('game_over', onGameOver);
+      socket.off('round_start', onRoundStart);
+      soundEffects.stopClockTick();
       socket.off('returned_to_lobby', onReturnedToLobby);
     };
   }, [
@@ -461,6 +515,15 @@ export const GameView: React.FC<GameViewProps> = ({
         gap: '0.85rem',
       }}
     >
+      {/* Animated Round Announcement Popup (e.g. Round 1, Round 2) */}
+      {roundAnnouncement && (
+        <RoundAnnouncementModal
+          roundNumber={roundAnnouncement.roundNumber}
+          totalRounds={roundAnnouncement.totalRounds}
+          onDismiss={() => setRoundAnnouncement(null)}
+        />
+      )}
+
       {/* End-of-Turn Score Summary Modal */}
       {turnEndSummary && !gameOverData && (
         <TurnScoreboardModal
@@ -527,8 +590,29 @@ export const GameView: React.FC<GameViewProps> = ({
           />
         </div>
 
-        {/* Right: Replay Button & Leave Game */}
+        {/* Right: Sound Toggle, Replay Button & Leave Game */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+          <button
+            type="button"
+            onClick={() => setSoundEnabled(soundEffects.toggleSound())}
+            title={soundEnabled ? 'Mute Sounds' : 'Unmute Sounds'}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '0.4rem 0.65rem',
+              fontSize: '0.85rem',
+              fontWeight: 800,
+              color: soundEnabled ? '#0284c7' : '#64748b',
+              backgroundColor: soundEnabled ? '#f0f9ff' : '#f8fafc',
+              border: soundEnabled ? '1.5px solid #bae6fd' : '1.5px solid #e2e8f0',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            {soundEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+          </button>
           {lastTurnReplay && (
             <button
               type="button"
@@ -650,8 +734,23 @@ export const GameView: React.FC<GameViewProps> = ({
 
                     {/* Player Name and Score */}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {p.name} {isSelf && '(You)'}
+                      <div style={{ fontWeight: 700, fontSize: '0.85rem', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                        <span>{p.name} {isSelf && '(You)'}</span>
+                        {!p.isConnected && (
+                          <span
+                            style={{
+                              fontSize: '0.65rem',
+                              backgroundColor: '#fef3c7',
+                              color: '#b45309',
+                              padding: '0.05rem 0.35rem',
+                              borderRadius: '4px',
+                              fontWeight: 800,
+                              border: '1px solid #fde68a',
+                            }}
+                          >
+                            ⚠️ Reconnecting...
+                          </span>
+                        )}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                         <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#16a34a' }}>

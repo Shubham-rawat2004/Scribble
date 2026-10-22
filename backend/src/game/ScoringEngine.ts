@@ -7,6 +7,8 @@ export interface GuesserScoreResult {
 }
 
 export class ScoringEngine {
+  public static readonly DRAWER_SCALE_FACTOR = 0.6; // 60% of average solver base points to prevent 2-player ties and reward quick recognition
+
   /**
    * Calculates points awarded to a guesser based on speed (remaining time) and order of arrival.
    *
@@ -50,14 +52,14 @@ export class ScoringEngine {
 
   /**
    * Calculates points awarded to the drawer based on how quickly and how many
-   * players guessed their drawing (speed-weighted solver ratio).
+   * players guessed their drawing (speed-weighted solver ratio with authentic 60% drawer scale).
    *
    * Formula:
    * AverageSolverPoints = sum(solverBasePoints) / solversCount
    * SolverRatio = min(1, solversCount / totalEligibleGuessers)
-   * DrawerPoints = round(AverageSolverPoints * SolverRatio)
+   * DrawerPoints = round(AverageSolverPoints * SolverRatio * DRAWER_SCALE_FACTOR)
    *
-   * Bounds: [0, 400]
+   * Bounds: [0, 240]
    */
   public static calculateDrawerScore(
     solverBasePoints: number[] | number,
@@ -69,7 +71,7 @@ export class ScoringEngine {
       const totalGuessers = totalEligibleGuessers || 1;
       if (totalGuessers <= 0 || solversCount <= 0) return 0;
       const fraction = Math.min(1, solversCount / totalGuessers);
-      return Math.round(400 * fraction);
+      return Math.round(400 * fraction * ScoringEngine.DRAWER_SCALE_FACTOR);
     }
 
     const totalGuessers = Math.max(1, totalEligibleGuessers || 1);
@@ -81,6 +83,6 @@ export class ScoringEngine {
     const averageSolverPoints = sum / solverBasePoints.length;
     const solverRatio = Math.min(1, solverBasePoints.length / totalGuessers);
 
-    return Math.round(averageSolverPoints * solverRatio);
+    return Math.round(averageSolverPoints * solverRatio * ScoringEngine.DRAWER_SCALE_FACTOR);
   }
 }
